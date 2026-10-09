@@ -78,7 +78,8 @@ const addMonths = (d,n) => { const x=new Date(d+"T12:00:00"); x.setMonth(x.getMo
 const label = s => s.type==="otro" && s.other ? s.other : (TYPE[s.type]?.label || s.type);
 const el = (tag, props={}, ...kids) => { const e=document.createElement(tag); Object.assign(e,props); kids.flat().forEach(k=>k!=null&&k!==""&&e.append(k)); return e; };
 
-function toast(msg){ const t=el("div",{className:"toast",textContent:msg}); document.body.append(t); setTimeout(()=>t.remove(),2600); }
+let toastTimer=null;
+function toast(msg){ document.querySelectorAll(".toast").forEach(t=>t.remove()); clearTimeout(toastTimer); const t=el("div",{className:"toast",textContent:msg,role:"status"}); document.body.append(t); toastTimer=setTimeout(()=>t.remove(),3000); }
 function remember(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 function recall(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 
@@ -319,13 +320,26 @@ $("#f-car").onsubmit=async e=>{
   }catch(err){ toast("No se pudo guardar: "+err); }
 };
 
-function openOdo(){ const v=car(); $("#o-km").value=v.odo??""; $("#dlg-odo").showModal(); }
+function odoError(msg){ const e=$("#o-err"); e.textContent=msg||""; e.hidden=!msg; }
+function openOdo(){
+  const v=car(); if(!v) return;
+  const input=$("#o-km"); input.value="";
+  input.placeholder = v.odo!=null ? String(v.odo) : "";
+  $("#o-prev").textContent = `Lectura anterior: ${fmtKm(v.odo)} km${v.odoDate?` (${fmtDate(v.odoDate)})`:""}.`;
+  odoError(""); const save=$("#o-save"); save.textContent="Guardar"; delete save.dataset.lower;
+  $("#dlg-odo").showModal(); input.focus();
+}
+$("#o-km").addEventListener("input",()=>{ odoError(""); const s=$("#o-save"); s.textContent="Guardar"; delete s.dataset.lower; });
 $("#f-odo").onsubmit=async e=>{
-  e.preventDefault(); const v=car(); const km=Number($("#o-km").value);
-  $("#dlg-odo").close();
-  if(km<(v.odo||0)){ toast("La lectura es menor que la anterior; revísala"); return; }
-  try{ await putRecord({...v, odo:km, odoDate:today()}); await reload(); toast("Kilometraje actualizado"); }
-  catch(err){ toast("No se pudo guardar: "+err); }
+  e.preventDefault(); const v=car(); if(!v) return;
+  const raw=$("#o-km").value.trim(), km=Number(raw), save=$("#o-save");
+  if(raw==="" || !Number.isFinite(km) || km<0 || km>2000000){ odoError("Escribe una lectura válida en kilómetros (solo números)."); return; }
+  if(km<(v.odo||0) && !save.dataset.lower){
+    odoError(`${fmtKm(km)} km es menor que la lectura anterior (${fmtKm(v.odo)} km). Si estás corrigiendo un error, toca de nuevo para guardar.`);
+    save.dataset.lower="1"; save.textContent="Guardar de todas formas"; return;
+  }
+  try{ await putRecord({...v, odo:Math.round(km), odoDate:today()}); $("#dlg-odo").close(); await reload(); toast("Kilometraje actualizado"); }
+  catch(err){ odoError("No se pudo guardar: "+err); }
 };
 
 // ---------- files: backup / restore / CSV ----------
