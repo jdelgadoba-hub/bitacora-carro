@@ -1,0 +1,31 @@
+# Bitácora del Carro
+
+App web instalable (PWA) para llevar el mantenimiento de tus vehículos: cambios de aceite, bandas, filtros, frenos, piezas, costos y kilometraje.
+
+## Privacidad
+
+- **Tus datos se guardan solo en tu teléfono**, en el almacenamiento interno del navegador (IndexedDB).
+- Este repositorio y GitHub Pages solo contienen el **código**. No hay servidor, base de datos, analítica ni conexiones externas: la política de seguridad de contenido (CSP) de `index.html` bloquea cualquier conexión a otros dominios.
+- Los respaldos son archivos `.json` que tú guardas donde quieras (iCloud Drive, Google Drive, OneDrive).
+
+## Instalar en el iPhone
+
+1. Abre la URL de GitHub Pages en **Safari**.
+2. Toca **Compartir** → **Agregar a pantalla de inicio**.
+3. Abre la app siempre desde ese ícono. Los datos del ícono y los de Safari son espacios separados.
+
+## Respaldos (importante)
+
+iOS puede borrar los datos de una app web si el teléfono se queda sin espacio, y se borran si eliminas el ícono. Por eso:
+
+- **Respaldar** → menú Compartir → *Guardar en Archivos* → elige iCloud Drive, Google Drive u OneDrive.
+- **Restaurar** → selecciona el archivo `.json`. Reemplaza los datos actuales del dispositivo.
+- La app te avisa si llevas 30 días o más sin respaldar.
+
+## Publicar actualizaciones
+
+Cada vez que cambies archivos, sube el valor de `VERSION` en `sw.js` (por ejemplo `bc-v2`) para que los teléfonos descarguen la versión nueva.
+
+## Intervalos sugeridos
+
+Los intervalos que se rellenan automáticamente (por ejemplo, aceite cada 5.000 km o 6 meses) son **genéricos y editables**. Usa siempre los del manual de tu vehículo.
