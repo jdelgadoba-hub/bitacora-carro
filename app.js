@@ -241,8 +241,9 @@ function budget(v, perDay){
   list.forEach(s=>{ const k=s.type==="otro"?"otro:"+(s.other||""):s.type; if(!latest.has(k)) latest.set(k,s); });
   const items=[];
   latest.forEach((s,k)=>{
-    const intKm = (s.nextKm && s.km!=null && s.nextKm>s.km) ? s.nextKm-s.km : null;
-    const intMo = (s.date && s.nextDate && s.nextDate>s.date) ? (dayNum(s.nextDate)-dayNum(s.date))/30.44 : null;
+    // intervals under 500 km or 1 month are treated as typos, so they cannot inflate the budget
+    const intKm = (s.nextKm && s.km!=null && s.nextKm-s.km>=500) ? s.nextKm-s.km : null;
+    const intMo = (s.date && s.nextDate && (dayNum(s.nextDate)-dayNum(s.date))/30.44>=1) ? (dayNum(s.nextDate)-dayNum(s.date))/30.44 : null;
     const byKm = intKm && perDay ? perDay*365/intKm : 0, byMo = intMo ? 12/intMo : 0;
     const times=Math.max(byKm,byMo); if(!times) return;
     const priced=list.find(x=>(x.type==="otro"?"otro:"+(x.other||""):x.type)===k && x.cost!=null);
@@ -561,7 +562,7 @@ $("#btn-csv").onclick=async ()=>{
 
 // Validate an imported backup strictly: only known kinds and plain fields are accepted.
 const STR = (x,max)=> typeof x==="string" ? x.slice(0,max) : "";
-const NUM = x=> (typeof x==="number" && isFinite(x) && x>=0) ? x : null;
+const NUM = x=> (typeof x==="number" && isFinite(x) && x>=0 && x<=1e12) ? x : null;
 const DATE = x=>{
   if(typeof x!=="string" || !/^\d{4}-\d{2}-\d{2}/.test(x)) return null;
   const d=x.slice(0,10), [y,m,day]=d.split("-").map(Number), t=new Date(Date.UTC(y,m-1,day));
@@ -586,7 +587,8 @@ $("#restore-file").onchange=async e=>{
   try{
     const data=JSON.parse(await f.text());
     if(data?.app!=="bitacora-carro" || !Array.isArray(data.records)) throw new Error("no es un respaldo de esta app");
-    const recs=data.records.map(sanitize).filter(Boolean);
+    const seen=new Set();
+    const recs=data.records.map(sanitize).filter(r=>r && !seen.has(r.id) && seen.add(r.id));
     const vids=new Set(recs.filter(r=>r.kind==="vehicle").map(r=>r.id));
     const clean=recs.filter(r=>r.kind==="vehicle" || vids.has(r.vid));
     state.pendingRestore=clean;
