@@ -22,6 +22,12 @@ iOS puede borrar los datos de una app web si el teléfono se queda sin espacio, 
 - **Restaurar** → selecciona el archivo `.json`. Reemplaza los datos actuales del dispositivo.
 - La app te avisa si llevas 30 días o más sin respaldar.
 
+## Kilometraje y presupuesto
+
+- Cada lectura del odómetro queda en el historial. Registra el km **una vez al mes** (por ejemplo, el último día); también puedes cargar lecturas de fechas pasadas.
+- La app calcula los **km por mes** (entre dos lecturas, reparte los km según los días), el **promedio mensual**, la **proyección anual** y el total del año.
+- El **presupuesto anual** multiplica cuántas veces al año te toca cada servicio (según tu promedio de km y el intervalo que definiste) por su último costo.
+
 ## Publicar actualizaciones
 
 Cada vez que cambies archivos, sube el valor de `VERSION` en `sw.js` (por ejemplo `bc-v2`) para que los teléfonos descarguen la versión nueva.

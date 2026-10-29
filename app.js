@@ -65,7 +65,7 @@ const TYPE = Object.freeze(Object.assign(Object.create(null), Object.fromEntries
 const BACKUP_DAYS = 30;
 
 const $ = s=>document.querySelector(s);
-const state = { vehicles:[], services:[], sel:null, filter:"", editSvc:null, editCar:null, lastBackup:null, persisted:null, pendingRestore:null };
+const state = { vehicles:[], services:[], readings:[], year:null, sel:null, filter:"", editSvc:null, editCar:null, lastBackup:null, persisted:null, pendingRestore:null };
 
 const nf = { format: n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".") };
 const cf = new Intl.NumberFormat("es",{maximumFractionDigits:2});
@@ -87,6 +87,7 @@ async function reload(){
   const docs = await allRecords();
   state.vehicles = docs.filter(d=>d.kind==="vehicle").sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
   state.services = docs.filter(d=>d.kind==="service");
+  state.readings = docs.filter(d=>d.kind==="reading");
   if(!state.vehicles.some(v=>v.id===state.sel)){
     const saved = recall("bc.sel");
     state.sel = state.vehicles.some(v=>v.id===saved) ? saved : (state.vehicles[0]?.id||null);
@@ -144,7 +145,7 @@ function render(){
       )
     ));
   }
-  renderDue(v); renderLog(v); renderDataStatus();
+  renderDue(v); renderMileage(v); renderLog(v); renderDataStatus();
 }
 
 function dueItems(v){
@@ -183,6 +184,160 @@ function renderDue(v){
     box.append(r);
   });
 }
+
+// ---------- mileage: odometer history, monthly km, projections, budget ----------
+const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const dayNum = d => { const [y,m,x]=d.split("-").map(Number); return Date.UTC(y,m-1,x)/86400000; };
+const ymd = n => new Date(n*86400000).toISOString().slice(0,10);
+
+// Vehicles from earlier versions keep their last reading only on the vehicle record:
+// store it as a reading before it is overwritten, so the history is not lost.
+async function keepCurrentReading(v){
+  if(v.odoDate && v.odo!=null && !state.readings.some(r=>r.vid===v.id && r.date===v.odoDate)) await saveReading(v.id, v.odoDate, v.odo);
+}
+async function saveReading(vid, date, km){
+  // one reading per vehicle and day: a second one that day replaces the first
+  const same = state.readings.find(r=>r.vid===vid && r.date===date);
+  await putRecord({ id: same?same.id:newId(), kind:"reading", vid, date, km, createdAt:new Date().toISOString() });
+}
+
+// Odometer points from explicit readings, services and the current reading; sorted, one per day, never decreasing.
+function points(v){
+  const byDay=new Map();
+  const add=(date,km,src)=>{ if(!date||km==null) return; const p=byDay.get(date); if(!p||km>p.km) byDay.set(date,{date,km,src}); };
+  state.readings.filter(r=>r.vid===v.id).forEach(r=>add(r.date,r.km,"lectura"));
+  state.services.filter(s=>s.vid===v.id).forEach(s=>add(s.date,s.km,"servicio"));
+  add(v.odoDate, v.odo, "lectura");
+  const out=[]; [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>{
+    if(!out.length || p.km>=out[out.length-1].km) out.push({...p, d:dayNum(p.date)});
+  });
+  return out;
+}
+// Linear interpolation between readings; null outside the measured range (no extrapolation).
+function odoAt(pts, d){
+  if(!pts.length || d<pts[0].d || d>pts[pts.length-1].d) return null;
+  for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+    if(d<=b.d) return b.d===a.d ? b.km : a.km+(b.km-a.km)*(d-a.d)/(b.d-a.d); }
+  return pts[pts.length-1].km;
+}
+function monthly(pts, year){
+  return MONTHS.map((name,m)=>{
+    const start=Date.UTC(year,m,1)/86400000, end=Date.UTC(year,m+1,1)/86400000;
+    if(!pts.length) return {name,km:null,partial:false};
+    const s=Math.max(start,pts[0].d), e=Math.min(end,pts[pts.length-1].d);
+    if(e<=s) return {name,km:null,partial:false};
+    return { name, km:odoAt(pts,e)-odoAt(pts,s), partial:(e-s)<(end-start)-0.5 };
+  });
+}
+// km/day over the last 12 months (or since the first reading); needs at least 14 days of history.
+function pace(pts){
+  if(pts.length<2) return null;
+  const last=pts[pts.length-1], from=Math.max(pts[0].d, last.d-365), days=last.d-from;
+  if(days<14) return null;
+  return { perDay:(last.km-odoAt(pts,from))/days, days, from:ymd(from) };
+}
+function budget(v, perDay){
+  const latest=new Map(), list=svcs();
+  list.forEach(s=>{ const k=s.type==="otro"?"otro:"+(s.other||""):s.type; if(!latest.has(k)) latest.set(k,s); });
+  const items=[];
+  latest.forEach((s,k)=>{
+    const intKm = (s.nextKm && s.km!=null && s.nextKm>s.km) ? s.nextKm-s.km : null;
+    const intMo = (s.date && s.nextDate && s.nextDate>s.date) ? (dayNum(s.nextDate)-dayNum(s.date))/30.44 : null;
+    const byKm = intKm && perDay ? perDay*365/intKm : 0, byMo = intMo ? 12/intMo : 0;
+    const times=Math.max(byKm,byMo); if(!times) return;
+    const priced=list.find(x=>(x.type==="otro"?"otro:"+(x.other||""):x.type)===k && x.cost!=null);
+    const basis = byKm>=byMo ? `cada ${fmtKm(intKm)} km` : `cada ${Math.round(intMo)} meses`;
+    items.push({ name:label(s), times, basis, unit: priced?priced.cost:null, total: priced?times*priced.cost:null });
+  });
+  return items.sort((a,b)=>(b.total||0)-(a.total||0));
+}
+
+function renderMileage(v){
+  const box=$("#mileage"), ysel=$("#year"); box.replaceChildren();
+  if(!v){ ysel.hidden=true; box.append(el("div",{className:"list"},el("div",{className:"empty",textContent:"Aquí verás cuántos km recorres por mes, tu promedio y el presupuesto anual de mantenimiento."}))); return; }
+  const pts=points(v), p=pace(pts), nowY=new Date().getFullYear(), curMonth=today().slice(0,7);
+  const years=[]; if(pts.length) for(let y=Number(pts[0].date.slice(0,4)); y<=Math.max(nowY,Number(pts[pts.length-1].date.slice(0,4))); y++) years.push(y);
+  if(!years.includes(state.year)) state.year = years.includes(nowY) ? nowY : (years[years.length-1]||nowY);
+  ysel.replaceChildren(...years.map(y=>el("option",{value:String(y),textContent:String(y)}))); ysel.value=String(state.year); ysel.hidden=years.length<2;
+  const wrap=el("div",{className:"mi"});
+
+  // monthly reminder
+  if(!pts.some(x=>x.date.startsWith(curMonth))){
+    const b=el("button",{type:"button",textContent:"Registrar km"}); b.onclick=openOdo;
+    wrap.append(el("div",{className:"mi-remind"}, el("span",{textContent:`Aún no registras el kilometraje de ${MONTHS[new Date().getMonth()].toLowerCase()}.`}), b));
+  }
+
+  const months=monthly(pts, state.year), yearKm=months.reduce((a,m)=>a+(m.km||0),0);
+  const isCur = state.year===nowY && p;
+  const lastD = pts.length?pts[pts.length-1].d:null, dec31=Date.UTC(state.year,11,31)/86400000;
+  const projYear = isCur && lastD<dec31 ? yearKm + p.perDay*(dec31-lastD) : null;
+  wrap.append(el("div",{className:"stats"},
+    el("div",{className:"stat"}, el("b",{textContent:p?fmtKm(p.perDay*30.44):"—"}), el("small",{textContent:"Km / mes"})),
+    el("div",{className:"stat"}, el("b",{textContent:p?fmtKm(p.perDay*365):"—"}), el("small",{textContent:"Km / año"})),
+    el("div",{className:"stat"}, el("b",{textContent:fmtKm(Math.round(yearKm))}), el("small",{textContent:`Total ${state.year}`}))
+  ));
+  const notes=[];
+  if(!p) notes.push("Para calcular tu promedio necesito al menos dos lecturas separadas por 2 semanas o más. Registra el km una vez al mes, por ejemplo el último día.");
+  else notes.push(`Promedio calculado desde el ${fmtDate(p.from)} (${Math.round(p.days)} días de historial).`);
+  if(projYear!=null) notes.push(`A este ritmo cerrarás ${state.year} con unos ${fmtKm(projYear)} km.`);
+
+  // monthly bars (single series: no legend; hatched = month only partly covered by readings)
+  const max=Math.max(0,...months.map(m=>m.km||0));
+  if(max>0){
+    const readout=el("div",{className:"readout",role:"status"});
+    const show=(m,btn)=>{ bars.querySelectorAll(".bar-hit").forEach(x=>x.setAttribute("aria-pressed","false")); btn&&btn.setAttribute("aria-pressed","true");
+      readout.replaceChildren(`${m.name} ${state.year}: `, el("b",{textContent:m.km==null?"sin datos":fmtKm(m.km)+" km"}), m.partial?" (mes parcial)":""); };
+    const bars=el("div",{className:"bars"});
+    const maxIdx=months.findIndex(m=>m.km===max);
+    let lastIdx=-1; months.forEach((m,i)=>{ if(m.km!=null) lastIdx=i; });
+    months.forEach((m,i)=>{
+      const h=m.km?Math.max(2,Math.round(m.km/max*104)):0;
+      const hit=el("button",{type:"button",className:"bar-hit"}); hit.setAttribute("aria-label",`${m.name}: ${m.km==null?"sin datos":fmtKm(m.km)+" km"}`);
+      hit.style.setProperty("--h",h+"px");
+      const b=el("span",{className:"b"+(m.partial?" part":"")}); b.style.height=h+"px"; hit.append(b);
+      if(i===maxIdx && m.km) hit.append(el("span",{className:"lbl",textContent:fmtKm(m.km)}));
+      hit.onclick=()=>show(m,hit); hit.onpointerenter=()=>show(m,hit); hit.onfocus=()=>show(m,hit);
+      bars.append(hit);
+    });
+    const monthsRow=el("div",{className:"months"}, ...MONTHS.map(n=>el("span",{textContent:n[0]})));
+    const rows=months.map(m=>el("tr",{}, el("td",{textContent:m.name}), el("td",{className:"n",textContent:m.km==null?"—":fmtKm(m.km)+(m.partial?" *":"")})));
+    const tbl=el("details",{className:"tbl"}, el("summary",{textContent:"Ver tabla mensual"}),
+      el("table",{}, el("thead",{}, el("tr",{}, el("th",{textContent:"Mes"}), el("th",{className:"n",textContent:"Km"}))), el("tbody",{},...rows,
+        el("tr",{}, el("th",{textContent:`Total ${state.year}`}), el("th",{className:"n",textContent:fmtKm(Math.round(yearKm))+" km"})))));
+    wrap.append(el("div",{className:"chart"}, readout, bars, monthsRow, tbl));
+    show(months[lastIdx], bars.children[lastIdx]);
+    notes.push("Entre dos lecturas, los km se reparten según los días transcurridos. Barra rayada (*): mes con lecturas incompletas.");
+  }
+  wrap.append(el("p",{className:"hint",textContent:notes.join(" ")}));
+
+  // annual maintenance budget
+  const items=budget(v, p?p.perDay:null);
+  const spent=state.services.filter(s=>s.vid===v.id && (s.date||"").startsWith(String(state.year))).reduce((a,s)=>a+(Number(s.cost)||0),0);
+  const bl=el("div",{className:"list budget"});
+  if(!items.length) bl.append(el("div",{className:"empty"}, el("strong",{textContent:"Sin presupuesto todavía"}), "Registra servicios con su costo y el próximo km o fecha; con eso calculo cuántas veces al año te toca cada uno."));
+  else {
+    items.forEach(it=>bl.append(el("div",{className:"row"},
+      el("div",{className:"row-title",textContent:it.name}),
+      el("div",{className:"row-right",textContent: it.total!=null ? "$"+cf.format(Math.round(it.total)) : "—"}),
+      el("div",{className:"row-meta",textContent:`≈ ${it.times.toLocaleString("es",{maximumFractionDigits:1})} veces/año (${it.basis})` + (it.unit!=null?` × $${cf.format(it.unit)}`:" · sin costo registrado")}))));
+    const total=items.reduce((a,it)=>a+(it.total||0),0);
+    bl.append(el("div",{className:"budget-total"}, el("span",{textContent:"Presupuesto anual estimado"}), el("span",{className:"mono",textContent:"$"+cf.format(Math.round(total))})));
+  }
+  wrap.append(el("div",{}, el("h2",{textContent:"Presupuesto anual de mantenimiento",style:"margin-bottom:8px"}), bl,
+    el("p",{className:"note",textContent:`Gasto real registrado en ${state.year}: $${cf.format(spent)}. El presupuesto usa tu promedio de km, los intervalos que definiste en cada servicio y su último costo.`})));
+
+  // explicit readings (to fix mistakes)
+  const mine=state.readings.filter(r=>r.vid===v.id).sort((a,b)=>b.date.localeCompare(a.date));
+  if(mine.length){
+    const rows=mine.map(r=>{ const del=el("button",{type:"button",className:"mini",textContent:"Eliminar"});
+      del.onclick=async()=>{ if(!del.classList.contains("armed")){ del.classList.add("armed"); del.textContent="¿Seguro?"; return; }
+        try{ await delRecord(r.id); await reload(); toast("Lectura eliminada"); }catch(err){ toast("No se pudo eliminar: "+err); } };
+      return el("tr",{}, el("td",{textContent:fmtDate(r.date)}), el("td",{className:"n",textContent:fmtKm(r.km)+" km"}), el("td",{className:"n"},del)); });
+    wrap.append(el("details",{className:"tbl"}, el("summary",{textContent:`Lecturas registradas (${mine.length})`}), el("table",{}, el("tbody",{},...rows))));
+  }
+  box.append(wrap);
+}
+$("#year").onchange=e=>{ state.year=Number(e.target.value); renderMileage(car()); };
 
 function renderLog(v){
   const box=$("#log"); box.replaceChildren();
@@ -284,7 +439,7 @@ $("#f-svc").onsubmit=async e=>{
   $("#dlg-svc").close();
   try{
     await putRecord({...data, id: prev?prev.id:newId(), createdAt: prev?.createdAt||now});
-    if(data.km!=null && data.km>(v.odo||0)) await putRecord({...v, odo:data.km, odoDate:data.date});
+    if(data.km!=null && data.km>(v.odo||0)){ await keepCurrentReading(v); await putRecord({...v, odo:data.km, odoDate:data.date}); }
     await reload(); toast("Servicio guardado");
   }catch(err){ toast("No se pudo guardar: "+err); }
 };
@@ -298,8 +453,8 @@ function openCar(v){
   $("#dlg-car").showModal();
 }
 $("#c-del").onclick=async e=>{
-  const v=state.editCar; const mine=state.services.filter(s=>s.vid===v.id);
-  if(!armDelete(e.currentTarget,`Borra también ${mine.length} registro(s). ¿Confirmas?`)) return;
+  const v=state.editCar; const mine=[...state.services, ...state.readings].filter(s=>s.vid===v.id);
+  if(!armDelete(e.currentTarget,`Borra también ${mine.length} registro(s) de servicios y lecturas. ¿Confirmas?`)) return;
   $("#dlg-car").close();
   try{
     for(const s of mine) await delRecord(s.id);
@@ -314,8 +469,15 @@ $("#f-car").onsubmit=async e=>{
     odo:Number($("#c-odo").value)||0 };
   $("#dlg-car").close();
   try{
-    if(v){ await putRecord({...v, ...data, odoDate: data.odo!==v.odo ? today() : v.odoDate}); }
-    else { const id=newId(); await putRecord({...data, id, odoDate:today(), createdAt:new Date().toISOString()}); state.sel=id; remember("bc.sel",id); }
+    if(v){
+      const changed = data.odo!==v.odo;
+      if(changed && data.odo>(v.odo||0)) await keepCurrentReading(v);
+      await putRecord({...v, ...data, odoDate: changed ? today() : v.odoDate});
+      if(changed) await saveReading(v.id, today(), data.odo);
+    } else {
+      const id=newId(); await putRecord({...data, id, odoDate:today(), createdAt:new Date().toISOString()});
+      await saveReading(id, today(), data.odo); state.sel=id; remember("bc.sel",id);
+    }
     await reload(); toast("Vehículo guardado");
   }catch(err){ toast("No se pudo guardar: "+err); }
 };
@@ -323,23 +485,40 @@ $("#f-car").onsubmit=async e=>{
 function odoError(msg){ const e=$("#o-err"); e.textContent=msg||""; e.hidden=!msg; }
 function openOdo(){
   const v=car(); if(!v) return;
-  const input=$("#o-km"); input.value="";
+  const input=$("#o-km"); input.value=""; $("#o-date").value=today(); $("#o-date").max=today();
   input.placeholder = v.odo!=null ? String(v.odo) : "";
   $("#o-prev").textContent = `Lectura anterior: ${fmtKm(v.odo)} km${v.odoDate?` (${fmtDate(v.odoDate)})`:""}.`;
   odoError(""); const save=$("#o-save"); save.textContent="Guardar"; delete save.dataset.lower;
   $("#dlg-odo").showModal(); input.focus();
 }
-$("#o-km").addEventListener("input",()=>{ odoError(""); const s=$("#o-save"); s.textContent="Guardar"; delete s.dataset.lower; });
+["#o-km","#o-date"].forEach(id=>$(id).addEventListener("input",()=>{ odoError(""); const s=$("#o-save"); s.textContent="Guardar"; delete s.dataset.lower; }));
 $("#f-odo").onsubmit=async e=>{
   e.preventDefault(); const v=car(); if(!v) return;
-  const raw=$("#o-km").value.trim(), km=Number(raw), save=$("#o-save");
+  const raw=$("#o-km").value.trim(), km=Math.round(Number(raw)), date=DATE($("#o-date").value), save=$("#o-save");
   if(raw==="" || !Number.isFinite(km) || km<0 || km>2000000){ odoError("Escribe una lectura válida en kilómetros (solo números)."); return; }
-  if(km<(v.odo||0) && !save.dataset.lower){
-    odoError(`${fmtKm(km)} km es menor que la lectura anterior (${fmtKm(v.odo)} km). Si estás corrigiendo un error, toca de nuevo para guardar.`);
-    save.dataset.lower="1"; save.textContent="Guardar de todas formas"; return;
+  if(!date || date>today()){ odoError("Elige una fecha válida que no sea futura."); return; }
+  const isLatest = !v.odoDate || date>=v.odoDate;
+  if(!save.dataset.lower){
+    let msg=null;
+    if(isLatest && km<(v.odo||0)) msg=`${fmtKm(km)} km es menor que la lectura anterior (${fmtKm(v.odo)} km). Si estás corrigiendo un error, toca de nuevo para guardar.`;
+    else if(!isLatest){
+      const pts=points(v), d=dayNum(date);
+      const prev=[...pts].reverse().find(p=>p.d<=d), next=pts.find(p=>p.d>=d);
+      if(prev && km<prev.km) msg=`El ${fmtDate(prev.date)} ya tenías ${fmtKm(prev.km)} km; esta lectura es menor. Toca de nuevo si es correcta.`;
+      else if(next && km>next.km) msg=`El ${fmtDate(next.date)} tenías ${fmtKm(next.km)} km; esta lectura es mayor. Toca de nuevo si es correcta.`;
+    }
+    if(msg){ odoError(msg); save.dataset.lower="1"; save.textContent="Guardar de todas formas"; return; }
   }
-  try{ await putRecord({...v, odo:Math.round(km), odoDate:today()}); $("#dlg-odo").close(); await reload(); toast("Kilometraje actualizado"); }
-  catch(err){ odoError("No se pudo guardar: "+err); }
+  try{
+    if(isLatest){
+      // a confirmed lower reading is a correction: drop explicit readings above it
+      if(km<(v.odo||0)) for(const r of state.readings.filter(r=>r.vid===v.id && r.km>km)) await delRecord(r.id);
+      else await keepCurrentReading(v);
+      await putRecord({...v, odo:km, odoDate:date});
+    }
+    await saveReading(v.id, date, km);
+    $("#dlg-odo").close(); await reload(); toast(isLatest?"Kilometraje actualizado":"Lectura guardada");
+  }catch(err){ odoError("No se pudo guardar: "+err); }
 };
 
 // ---------- files: backup / restore / CSV ----------
@@ -392,6 +571,7 @@ function sanitize(r){
   if(!r || typeof r!=="object" || typeof r.id!=="string" || !r.id || r.id.length>64) return null;
   if(r.kind==="vehicle") return { id:r.id, kind:"vehicle", name:STR(r.name,40)||"Vehículo", make:STR(r.make,30), model:STR(r.model,40),
     year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:NUM(r.odo)||0, odoDate:DATE(r.odoDate), createdAt:STR(r.createdAt,40) };
+  if(r.kind==="reading"){ const date=DATE(r.date), km=NUM(r.km); return (date && km!=null) ? { id:r.id, kind:"reading", vid:STR(r.vid,64), date, km, createdAt:STR(r.createdAt,40) } : null; }
   if(r.kind==="service") return { id:r.id, kind:"service", vid:STR(r.vid,64), type: TYPE[r.type] ? r.type : "otro",
     other:STR(r.other,60) || (TYPE[r.type] ? "" : STR(r.type,60)), date:DATE(r.date), km:NUM(r.km), parts:STR(r.parts,200),
     cost:NUM(r.cost), shop:STR(r.shop,80), notes:STR(r.notes,500), nextKm:NUM(r.nextKm), nextDate:DATE(r.nextDate),
@@ -410,8 +590,8 @@ $("#restore-file").onchange=async e=>{
     const vids=new Set(recs.filter(r=>r.kind==="vehicle").map(r=>r.id));
     const clean=recs.filter(r=>r.kind==="vehicle" || vids.has(r.vid));
     state.pendingRestore=clean;
-    const nv=clean.filter(r=>r.kind==="vehicle").length, ns=clean.length-nv;
-    $("#r-summary").textContent=`Respaldo del ${fmtDate(data.exportedAt)}: ${nv} vehículo(s) y ${ns} servicio(s).`;
+    const cnt=k=>clean.filter(r=>r.kind===k).length;
+    $("#r-summary").textContent=`Respaldo del ${fmtDate(data.exportedAt)}: ${cnt("vehicle")} vehículo(s), ${cnt("service")} servicio(s) y ${cnt("reading")} lectura(s) de km.`;
     $("#dlg-restore").showModal();
   }catch(err){ toast("No se pudo leer el archivo: "+(err.message||err)); }
 };

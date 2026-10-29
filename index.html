@@ -113,6 +113,29 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .actions .primary{width:auto;flex:1}
 .hint{font-size:12px;color:var(--muted);margin:0}
+/* mileage */
+.mi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;gap:14px}
+.mi .stats{grid-template-columns:repeat(3,1fr)}
+.mi-remind{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:14px}
+.mi-remind button{border:1px solid currentColor;background:none;color:inherit;border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}
+.chart{display:grid;gap:6px}
+.readout{font-size:13px;color:var(--muted);min-height:1.4em}
+.readout b{color:var(--ink);font-family:var(--f-mono);font-weight:600}
+.bars{display:grid;grid-template-columns:repeat(12,1fr);gap:2px;align-items:end;height:120px;border-bottom:1px solid var(--line);position:relative}
+.bar-hit{height:100%;display:flex;align-items:flex-end;justify-content:center;background:none;border:0;padding:0 1px;position:relative}
+.bar-hit .b{width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0;min-height:0}
+.bar-hit .b.part{background:repeating-linear-gradient(45deg,var(--accent) 0 3px,transparent 3px 6px);box-shadow:inset 0 0 0 1px var(--accent)}
+.bar-hit[aria-pressed="true"] .b{outline:2px solid var(--ink);outline-offset:1px}
+.bar-hit .lbl{position:absolute;bottom:calc(var(--h) + 3px);font-size:10px;font-family:var(--f-mono);color:var(--muted);white-space:nowrap}
+.months{display:grid;grid-template-columns:repeat(12,1fr);gap:2px;text-align:center;font-size:11px;color:var(--muted)}
+details.tbl summary{cursor:pointer;font-size:13px;color:var(--muted)}
+details.tbl table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+details.tbl td,details.tbl th{padding:5px 4px;border-top:1px solid var(--line);text-align:left}
+details.tbl td.n,details.tbl th.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.mini{border:1px solid var(--line);background:none;border-radius:999px;padding:3px 10px;font-size:12px}
+.mini.armed{border-color:var(--bad);color:var(--bad)}
+.budget .row{cursor:default}
+.budget-total{display:flex;justify-content:space-between;gap:10px;padding:12px 14px;border-top:2px solid var(--line);font-weight:600}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:10;max-width:calc(100% - 32px);text-align:center}
 @media (prefers-reduced-motion:no-preference){.toast{animation:pop .2s ease-out}@keyframes pop{from{opacity:0;transform:translate(-50%,8px)}}}
 </style>
@@ -133,6 +156,14 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
     <div class="sec-head"><h2>Próximos mantenimientos</h2></div>
     <div class="list" id="due"></div>
     <p class="note">Calculado con el último registro de cada tipo y el kilometraje actual. "Pronto" = faltan menos de 1.000 km o 30 días.</p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Kilometraje</h2>
+      <select id="year" aria-label="Año" hidden></select>
+    </div>
+    <div id="mileage"></div>
   </section>
 
   <section>
@@ -206,7 +237,10 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 
 <dialog id="dlg-odo"><form class="sheet" id="f-odo" method="dialog">
   <h3>Actualizar kilometraje</h3>
-  <div class="field"><label for="o-km">Lectura del odómetro (km)</label><input id="o-km" type="number" inputmode="numeric" min="0" step="1" required></div>
+  <div class="grid2">
+    <div class="field"><label for="o-km">Lectura (km)</label><input id="o-km" type="number" inputmode="numeric" min="0" step="1" required></div>
+    <div class="field"><label for="o-date">Fecha</label><input id="o-date" type="date" required></div>
+  </div>
   <p class="hint" id="o-prev"></p>
   <p class="form-error" id="o-err" role="alert" hidden></p>
   <div class="actions">
