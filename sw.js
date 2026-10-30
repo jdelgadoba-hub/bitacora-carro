@@ -1,5 +1,5 @@
 // Offline support. Bump VERSION on every release so phones pick up the new files.
-const VERSION = "bc-v7";
+const VERSION = "bc-v9";
 const FILES = ["./", "index.html", "app.js", "manifest.webmanifest",
   "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png"];
 

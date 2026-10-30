@@ -26,6 +26,8 @@ iOS puede borrar los datos de una app web si el teléfono se queda sin espacio, 
 
 - Cada lectura del odómetro queda en el historial. Registra el km **una vez al mes** (por ejemplo, el último día); también puedes cargar lecturas de fechas pasadas.
 - La app calcula los **km por mes** (entre dos lecturas, reparte los km según los días), el **promedio mensual**, la **proyección anual** y el total del año.
+- **Cambios de aceite al año**: siempre visible. Usa tu intervalo (el "próximo km" que pongas al registrar el cambio) o el sugerido de 5.000 km / 6 meses, marcado como tal.
+- **Resumen por año**: km, cambios de aceite, servicios y gasto de cada año. Al llegar el 1 de enero, el año anterior queda cerrado ahí y en el selector de año; el promedio sigue usando los últimos 12 meses, así que no se "reinicia". En diciembre la app pide la lectura del 31 para cerrar el año exacto.
 - El **presupuesto anual** multiplica cuántas veces al año te toca cada servicio (según tu promedio de km y el intervalo que definiste) por su último costo.
 
 ## Publicar actualizaciones

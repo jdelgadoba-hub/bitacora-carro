@@ -208,7 +208,7 @@ function points(v){
   state.readings.filter(r=>r.vid===v.id).forEach(r=>add(r.date,r.km,"lectura"));
   state.services.filter(s=>s.vid===v.id).forEach(s=>add(s.date,s.km,"servicio"));
   add(v.odoDate, v.odo, "lectura");
-  const out=[]; [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>{
+  const out=[], now=today(); [...byDay.values()].filter(p=>p.date<=now).sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>{
     if(!out.length || p.km>=out[out.length-1].km) out.push({...p, d:dayNum(p.date)});
   });
   return out;
@@ -234,38 +234,62 @@ function pace(pts){
   if(pts.length<2) return null;
   const last=pts[pts.length-1], from=Math.max(pts[0].d, last.d-365), days=last.d-from;
   if(days<14) return null;
-  return { perDay:(last.km-odoAt(pts,from))/days, days, from:ymd(from) };
+  const perDay=(last.km-odoAt(pts,from))/days;
+  return perDay>2000 ? { implausible:true } : { perDay, days, from:ymd(from) };
 }
-function budget(v, perDay){
-  const latest=new Map(), list=svcs();
-  list.forEach(s=>{ const k=s.type==="otro"?"otro:"+(s.other||""):s.type; if(!latest.has(k)) latest.set(k,s); });
+const keyOf = s => s.type==="otro" ? "otro:"+(s.other||"") : s.type;
+// How often each maintenance comes up per year at the current pace. Uses the interval the
+// owner set on the latest service of that type; otherwise the suggested one (marked as such).
+// Oil is always listed. Intervals under 500 km or 1 month are treated as typos.
+function budget(v, perDay, year){
+  const now=today(), latest=new Map(), list=svcs().filter(s=>!s.date || s.date<=now);  // future-dated records are ignored
+  list.forEach(s=>{ const k=keyOf(s); if(!latest.has(k)) latest.set(k,s); });
+  if(!latest.has("aceite")) latest.set("aceite",{type:"aceite"});
   const items=[];
   latest.forEach((s,k)=>{
-    // intervals under 500 km or 1 month are treated as typos, so they cannot inflate the budget
-    const intKm = (s.nextKm && s.km!=null && s.nextKm-s.km>=500) ? s.nextKm-s.km : null;
-    const intMo = (s.date && s.nextDate && (dayNum(s.nextDate)-dayNum(s.date))/30.44>=1) ? (dayNum(s.nextDate)-dayNum(s.date))/30.44 : null;
+    let intKm = (s.nextKm && s.km!=null && s.nextKm-s.km>=500) ? s.nextKm-s.km : null;
+    let intMo = (s.date && s.nextDate && (dayNum(s.nextDate)-dayNum(s.date))/30.44>=1) ? (dayNum(s.nextDate)-dayNum(s.date))/30.44 : null;
+    let suggested=false;
+    if(!intKm && !intMo && TYPE[s.type] && (TYPE[s.type].km || TYPE[s.type].mo)){ intKm=TYPE[s.type].km; intMo=TYPE[s.type].mo; suggested=true; }
+    if(!intKm && !intMo) return;
     const byKm = intKm && perDay ? perDay*365/intKm : 0, byMo = intMo ? 12/intMo : 0;
-    const times=Math.max(byKm,byMo); if(!times) return;
-    const priced=list.find(x=>(x.type==="otro"?"otro:"+(x.other||""):x.type)===k && x.cost!=null);
-    const basis = byKm>=byMo ? `cada ${fmtKm(intKm)} km` : `cada ${Math.round(intMo)} meses`;
-    items.push({ name:label(s), times, basis, unit: priced?priced.cost:null, total: priced?times*priced.cost:null });
+    const times=Math.max(byKm,byMo);
+    const priced=list.find(x=>keyOf(x)===k && x.cost!=null);
+    const parts=[]; if(intKm) parts.push(`${fmtKm(intKm)} km`); if(intMo) parts.push(`${Math.round(intMo)} meses`);
+    const done=list.filter(x=>keyOf(x)===k && (x.date||"").startsWith(String(year))).length;
+    items.push({ key:k, name:label(s), times, every: times?12/times:null, rule:`cada ${parts.join(" o ")}`,
+      by: !times ? null : byKm>=byMo ? "km" : "tiempo", suggested, done, unit: priced?priced.cost:null, total: priced&&times?times*priced.cost:null });
   });
-  return items.sort((a,b)=>(b.total||0)-(a.total||0));
+  return items.sort((a,b)=>(a.key==="aceite"?-1:b.key==="aceite"?1:0) || (b.total||0)-(a.total||0) || b.times-a.times);
+}
+const fmt1 = n => n.toLocaleString("es",{maximumFractionDigits:1});
+
+// Per-year summary: km driven (from the monthly split), oil changes, services and spend.
+function yearSummary(v, pts, years){
+  return years.map(y=>{
+    const km=monthly(pts,y).reduce((a,m)=>a+(m.km||0),0);
+    const sv=state.services.filter(s=>s.vid===v.id && (s.date||"").startsWith(String(y)));
+    return { y, km, oil: sv.filter(s=>s.type==="aceite").length, n: sv.length, spent: sv.reduce((a,s)=>a+(Number(s.cost)||0),0) };
+  }).filter(r=>r.km>0 || r.n>0).reverse();   // only years with activity
 }
 
 function renderMileage(v){
   const box=$("#mileage"), ysel=$("#year"); box.replaceChildren();
   if(!v){ ysel.hidden=true; box.append(el("div",{className:"list"},el("div",{className:"empty",textContent:"Aquí verás cuántos km recorres por mes, tu promedio y el presupuesto anual de mantenimiento."}))); return; }
-  const pts=points(v), p=pace(pts), nowY=new Date().getFullYear(), curMonth=today().slice(0,7);
+  const pts=points(v), p0=pace(pts), p=p0&&!p0.implausible?p0:null, nowY=new Date().getFullYear(), curMonth=today().slice(0,7);
   const years=[]; if(pts.length) for(let y=Number(pts[0].date.slice(0,4)); y<=Math.max(nowY,Number(pts[pts.length-1].date.slice(0,4))); y++) years.push(y);
   if(!years.includes(state.year)) state.year = years.includes(nowY) ? nowY : (years[years.length-1]||nowY);
   ysel.replaceChildren(...years.map(y=>el("option",{value:String(y),textContent:String(y)}))); ysel.value=String(state.year); ysel.hidden=years.length<2;
   const wrap=el("div",{className:"mi"});
 
-  // monthly reminder
-  if(!pts.some(x=>x.date.startsWith(curMonth))){
+  // monthly reminder; in December, ask for the Dec 31 reading so the year closes exactly
+  const mNow=new Date().getMonth();
+  if(mNow===11 && !pts.some(x=>x.date===`${nowY}-12-31`)){
     const b=el("button",{type:"button",textContent:"Registrar km"}); b.onclick=openOdo;
-    wrap.append(el("div",{className:"mi-remind"}, el("span",{textContent:`Aún no registras el kilometraje de ${MONTHS[new Date().getMonth()].toLowerCase()}.`}), b));
+    wrap.append(el("div",{className:"mi-remind"}, el("span",{textContent:`Cierre de año: registra el km el 31 de diciembre para que ${nowY} cierre exacto.`}), b));
+  } else if(!pts.some(x=>x.date.startsWith(curMonth))){
+    const b=el("button",{type:"button",textContent:"Registrar km"}); b.onclick=openOdo;
+    wrap.append(el("div",{className:"mi-remind"}, el("span",{textContent:`Aún no registras el kilometraje de ${MONTHS[mNow].toLowerCase()}.`}), b));
   }
 
   const months=monthly(pts, state.year), yearKm=months.reduce((a,m)=>a+(m.km||0),0);
@@ -278,7 +302,8 @@ function renderMileage(v){
     el("div",{className:"stat"}, el("b",{textContent:fmtKm(Math.round(yearKm))}), el("small",{textContent:`Total ${state.year}`}))
   ));
   const notes=[];
-  if(!p) notes.push("Para calcular tu promedio necesito al menos dos lecturas separadas por 2 semanas o más. Registra el km una vez al mes, por ejemplo el último día.");
+  if(p0&&p0.implausible) notes.push("Tus lecturas dan más de 2.000 km por día, algo imposible: revisa las lecturas registradas y los km de tus servicios.");
+  else if(!p) notes.push("Para calcular tu promedio necesito al menos dos lecturas separadas por 2 semanas o más. Registra el km una vez al mes, por ejemplo el último día.");
   else notes.push(`Promedio calculado desde el ${fmtDate(p.from)} (${Math.round(p.days)} días de historial).`);
   if(projYear!=null) notes.push(`A este ritmo cerrarás ${state.year} con unos ${fmtKm(projYear)} km.`);
 
@@ -311,21 +336,45 @@ function renderMileage(v){
   }
   wrap.append(el("p",{className:"hint",textContent:notes.join(" ")}));
 
-  // annual maintenance budget
-  const items=budget(v, p?p.perDay:null);
+  // maintenance per year: frequency (always) and cost (when a price is known)
+  const items=budget(v, p?p.perDay:null, state.year);
   const spent=state.services.filter(s=>s.vid===v.id && (s.date||"").startsWith(String(state.year))).reduce((a,s)=>a+(Number(s.cost)||0),0);
-  const bl=el("div",{className:"list budget"});
-  if(!items.length) bl.append(el("div",{className:"empty"}, el("strong",{textContent:"Sin presupuesto todavía"}), "Registra servicios con su costo y el próximo km o fecha; con eso calculo cuántas veces al año te toca cada uno."));
-  else {
-    items.forEach(it=>bl.append(el("div",{className:"row"},
-      el("div",{className:"row-title",textContent:it.name}),
-      el("div",{className:"row-right",textContent: it.total!=null ? "$"+cf.format(Math.round(it.total)) : "—"}),
-      el("div",{className:"row-meta",textContent:`≈ ${it.times.toLocaleString("es",{maximumFractionDigits:1})} veces/año (${it.basis})` + (it.unit!=null?` × $${cf.format(it.unit)}`:" · sin costo registrado")}))));
-    const total=items.reduce((a,it)=>a+(it.total||0),0);
-    bl.append(el("div",{className:"budget-total"}, el("span",{textContent:"Presupuesto anual estimado"}), el("span",{className:"mono",textContent:"$"+cf.format(Math.round(total))})));
+  const oil=items.find(it=>it.key==="aceite");
+  if(oil && oil.times){
+    wrap.append(el("div",{className:"oil"},
+      el("div",{className:"oil-n",textContent:fmt1(oil.times)}),
+      el("div",{}, el("strong",{textContent:"cambios de aceite al año"}),
+        el("span",{textContent:`Uno cada ~${fmt1(oil.every)} meses (${oil.rule}${oil.suggested?", sugerido":""}). Llevas ${oil.done} en ${state.year}.`}))));
   }
-  wrap.append(el("div",{}, el("h2",{textContent:"Presupuesto anual de mantenimiento",style:"margin-bottom:8px"}), bl,
-    el("p",{className:"note",textContent:`Gasto real registrado en ${state.year}: $${cf.format(spent)}. El presupuesto usa tu promedio de km, los intervalos que definiste en cada servicio y su último costo.`})));
+  const bl=el("div",{className:"list budget"});
+  items.forEach(it=>{
+    const meta = !it.times
+      ? `${it.rule}${it.suggested?" (sugerido)":""} · necesito tu promedio de km para calcularlo`
+      : `Cada ~${fmt1(it.every)} meses · ${it.rule}${it.suggested?" (sugerido)":""} · hechos en ${state.year}: ${it.done}` + (it.unit!=null?` · $${cf.format(it.unit)} c/u`:" · sin costo registrado");
+    bl.append(el("div",{className:"row"},
+      el("div",{className:"row-title",textContent:it.name}),
+      el("div",{className:"row-right",textContent: it.times ? `${fmt1(it.times)}/año` : "—"}),
+      el("div",{className:"row-meta",textContent:meta + (it.total!=null?` → $${cf.format(Math.round(it.total))} al año`:"")})));
+  });
+  const total=items.reduce((a,it)=>a+(it.total||0),0);
+  bl.append(el("div",{className:"budget-total"}, el("span",{textContent:"Presupuesto anual estimado"}), el("span",{className:"mono",textContent:total?"$"+cf.format(Math.round(total)):"—"})));
+  wrap.append(el("div",{}, el("h2",{textContent:"Mantenimientos al año",style:"margin-bottom:8px"}), bl,
+    el("p",{className:"note",textContent:`Calculado con tu ritmo actual de km. Para usar tu propio intervalo (por ejemplo aceite sintético cada 10.000 km), pon el "próximo km" al registrar el servicio. Gasto real registrado en ${state.year}: $${cf.format(spent)}.`})));
+
+  // per-year summary (closing figures stay available after the year changes)
+  if(years.length){
+    const rows=yearSummary(v, pts, years).map(r=>el("tr",{},
+      el("td",{textContent: r.y===nowY ? `${r.y}*` : String(r.y)}),
+      el("td",{className:"n",textContent:fmtKm(Math.round(r.km))}),
+      el("td",{className:"n",textContent:String(r.oil)}),
+      el("td",{className:"n",textContent:String(r.n)}),
+      el("td",{className:"n",textContent:"$"+cf.format(r.spent)})));
+    wrap.append(el("div",{}, el("h2",{textContent:"Resumen por año",style:"margin-bottom:8px"}),
+      el("div",{className:"tbl-scroll"}, el("table",{className:"years"},
+        el("thead",{}, el("tr",{}, ...["Año","Km","Aceite","Serv.","Gasto"].map((h,i)=>el("th",{className:i?"n":"",textContent:h})))),
+        el("tbody",{},...rows))),
+      years.includes(nowY) ? el("p",{className:"note",textContent:`* ${nowY} en curso: el total crece con cada lectura y cierra el 31 de diciembre.`}) : null));
+  }
 
   // explicit readings (to fix mistakes)
   const mine=state.readings.filter(r=>r.vid===v.id).sort((a,b)=>b.date.localeCompare(a.date));
@@ -431,6 +480,8 @@ $("#f-svc").onsubmit=async e=>{
   e.preventDefault();
   const v=car(); const num=x=>x===""?null:Number(x);
   const now=new Date().toISOString();
+  const kmOk=x=>x===""||(Number(x)>=0&&Number(x)<=2e6);
+  if(!kmOk($("#s-km").value)||!kmOk($("#s-nextkm").value)){ toast("El kilometraje debe estar entre 0 y 2.000.000 km"); return; }
   const data={ kind:"service", vid:v.id, type:typeSel.value,
     other: typeSel.value==="otro" ? $("#s-other").value.trim() : "",
     date:$("#s-date").value, km:num($("#s-km").value), parts:$("#s-parts").value.trim(),
@@ -563,6 +614,8 @@ $("#btn-csv").onclick=async ()=>{
 // Validate an imported backup strictly: only known kinds and plain fields are accepted.
 const STR = (x,max)=> typeof x==="string" ? x.slice(0,max) : "";
 const NUM = x=> (typeof x==="number" && isFinite(x) && x>=0 && x<=1e12) ? x : null;
+const COST = x=> { const n=NUM(x); return n!=null && n<=1e9 ? n : null; };
+const KM = x=> { const n=NUM(x); return n!=null && n<=2e6 ? n : null; };
 const DATE = x=>{
   if(typeof x!=="string" || !/^\d{4}-\d{2}-\d{2}/.test(x)) return null;
   const d=x.slice(0,10), [y,m,day]=d.split("-").map(Number), t=new Date(Date.UTC(y,m-1,day));
@@ -571,11 +624,11 @@ const DATE = x=>{
 function sanitize(r){
   if(!r || typeof r!=="object" || typeof r.id!=="string" || !r.id || r.id.length>64) return null;
   if(r.kind==="vehicle") return { id:r.id, kind:"vehicle", name:STR(r.name,40)||"Vehículo", make:STR(r.make,30), model:STR(r.model,40),
-    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:NUM(r.odo)||0, odoDate:DATE(r.odoDate), createdAt:STR(r.createdAt,40) };
-  if(r.kind==="reading"){ const date=DATE(r.date), km=NUM(r.km); return (date && km!=null) ? { id:r.id, kind:"reading", vid:STR(r.vid,64), date, km, createdAt:STR(r.createdAt,40) } : null; }
+    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:KM(r.odo)||0, odoDate:DATE(r.odoDate), createdAt:STR(r.createdAt,40) };
+  if(r.kind==="reading"){ const date=DATE(r.date), km=KM(r.km); return (date && km!=null) ? { id:r.id, kind:"reading", vid:STR(r.vid,64), date, km, createdAt:STR(r.createdAt,40) } : null; }
   if(r.kind==="service") return { id:r.id, kind:"service", vid:STR(r.vid,64), type: TYPE[r.type] ? r.type : "otro",
-    other:STR(r.other,60) || (TYPE[r.type] ? "" : STR(r.type,60)), date:DATE(r.date), km:NUM(r.km), parts:STR(r.parts,200),
-    cost:NUM(r.cost), shop:STR(r.shop,80), notes:STR(r.notes,500), nextKm:NUM(r.nextKm), nextDate:DATE(r.nextDate),
+    other:STR(r.other,60) || (TYPE[r.type] ? "" : STR(r.type,60)), date:DATE(r.date), km:KM(r.km), parts:STR(r.parts,200),
+    cost:COST(r.cost), shop:STR(r.shop,80), notes:STR(r.notes,500), nextKm:KM(r.nextKm), nextDate:DATE(r.nextDate),
     createdAt:STR(r.createdAt,40), updatedAt:STR(r.updatedAt,40) };
   return null;
 }
