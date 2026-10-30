@@ -1,0 +1,9 @@
+{"app":"bitacora-carro","format":1,"exportedAt":"2026-10-28T12:00:00Z","records":[
+ {"id":"v1","kind":"vehicle","name":"Corolla","odo":28000,"odoDate":"2026-10-01","createdAt":"2026-01-01"},
+ {"id":"r1","kind":"reading","vid":"v1","date":"2026-01-01","km":10000},
+ {"id":"r2","kind":"reading","vid":"v1","date":"2026-04-01","km":16000},
+ {"id":"r3","kind":"reading","vid":"v1","date":"2026-07-01","km":22000},
+ {"id":"s1","kind":"service","vid":"v1","type":"aceite","date":"2026-04-01","km":16000,"nextKm":21000,"nextDate":"2026-10-01","cost":180000},
+ {"id":"s2","kind":"service","vid":"v1","type":"filtro_aire","date":"2026-01-01","km":10000,"nextKm":25000,"cost":60000},
+ {"id":"v2","kind":"vehicle","name":"Moto","odo":5000,"odoDate":"2026-09-15","createdAt":"2026-09-01"}
+]}

@@ -1,0 +1,20 @@
+const { chromium, devices } = require('playwright');
+(async()=>{
+  const b=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined});
+  const p=await (await b.newContext({...devices['iPhone 13']})).newPage(); const errs=[]; p.on('pageerror',e=>errs.push(e.message));
+  await p.goto('http://localhost:'+(process.env.PORT||8766)+'/'); await p.waitForTimeout(500);
+  await p.tap('text=Agregar vehículo'); await p.fill('#c-name','X'); await p.fill('#c-odo','85000'); await p.tap('#f-car button[type=submit]'); await p.waitForTimeout(400);
+  const odo=()=>p.textContent('.odo-val'), open=()=>p.isVisible('#dlg-odo'), err=()=>p.textContent('#o-err');
+  await p.tap('text=Actualizar km');
+  const box=await p.$eval('#dlg-odo',d=>{const r=d.getBoundingClientRect();return Math.round(r.top)+'-'+Math.round(r.bottom)+' de '+innerHeight;});
+  console.log('ventana (px):', box, '| foco en campo:', await p.evaluate(()=>document.activeElement.id));
+  await p.tap('#o-save'); console.log('1) vacío -> sigue abierto:', await open(), '| odo', await odo());
+  await p.fill('#o-km','86000'); await p.tap('#o-save'); await p.waitForTimeout(300);
+  console.log('2) mayor 86000 ->', await odo(), '| cerrado:', !(await open()), '| aviso:', await p.textContent('.toast'));
+  await p.tap('text=Actualizar km'); await p.fill('#o-km','8600'); await p.tap('#o-save'); await p.waitForTimeout(200);
+  console.log('3) menor sin confirmar -> abierto:', await open(), '| odo', await odo(), '|', (await err()).slice(0,60), '| botón:', await p.textContent('#o-save'));
+  await p.tap('#o-save'); await p.waitForTimeout(300);
+  console.log('4) menor confirmado ->', await odo(), '| cerrado:', !(await open()));
+  console.log('toasts simultáneos:', await p.$$eval('.toast',t=>t.length), '| errores:', errs);
+  await b.close();
+})();

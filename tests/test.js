@@ -1,0 +1,25 @@
+const { chromium, devices } = require('playwright');
+(async()=>{
+  const b = await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined});
+  const ctx = await b.newContext({...devices['iPhone 13'], colorScheme:'light'});
+  const p = await ctx.newPage(); const errs=[];
+  p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>m.type()==='error'&&errs.push(m.text()));
+  await p.goto('http://localhost:'+(process.env.PORT||8766)+'/');
+  await p.click('text=Agregar vehículo');
+  await p.fill('#c-name','El Corolla'); await p.fill('#c-make','Toyota'); await p.fill('#c-model','Corolla');
+  await p.fill('#c-year','2018'); await p.fill('#c-plate','abc123'); await p.fill('#c-odo','84500');
+  await p.click('#f-car button[type=submit]'); await p.waitForTimeout(300);
+  await p.$eval('#btn-add',b=>b.click()); await p.fill('#s-parts','Aceite 5W-30 sintético + filtro'); await p.fill('#s-cost','180000'); await p.fill('#s-shop','Taller Ejemplo');
+  await p.click('#f-svc button[type=submit]'); await p.waitForTimeout(300);
+  await p.$eval('#btn-add',b=>b.click()); await p.selectOption('#s-type','banda_dist'); await p.fill('#s-km','80000'); await p.fill('#s-date','2024-03-10'); await p.fill('#s-nextkm','85000');
+  await p.click('#f-svc button[type=submit]'); await p.waitForTimeout(300);
+  await p.reload(); await p.waitForTimeout(800);
+  console.log('after reload:', (await p.textContent('#car')).replace(/\s+/g,' '));
+  console.log('due:', (await p.textContent('#due')).replace(/\s+/g,' '));
+  console.log('sw:', await p.evaluate(()=>navigator.serviceWorker.getRegistrations().then(r=>r.length)));
+  await p.screenshot({path:require('os').tmpdir()+'/shot-light.png',fullPage:true});
+  await p.emulateMedia({colorScheme:'dark'}); await p.screenshot({path:require('os').tmpdir()+'/shot-dark.png'});
+  console.log('overflow:', await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth));
+  console.log('errors:', errs);
+  await b.close();
+})();

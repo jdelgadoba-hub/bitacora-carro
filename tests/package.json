@@ -1,0 +1,6 @@
+{
+  "name": "bitacora-carro-tests",
+  "private": true,
+  "description": "Pruebas de seguridad y regresión. Ejecutar: npm install && ./run.sh",
+  "devDependencies": { "playwright": "1.48.2" }
+}
