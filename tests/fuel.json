@@ -1,0 +1,9 @@
+{"app":"bitacora-carro","format":1,"exportedAt":"2026-11-07T12:00:00Z","records":[
+ {"id":"v1","kind":"vehicle","name":"Corolla","odo":50000,"odoDate":"2026-10-01","fuelUnit":"gal","createdAt":"2026-10-01"},
+ {"id":"f1","kind":"fuel","vid":"v1","date":"2026-10-01","km":50000,"vol":10,"cost":150000,"full":true},
+ {"id":"f2","kind":"fuel","vid":"v1","date":"2026-10-15","km":50400,"vol":5,"cost":80000,"full":false},
+ {"id":"f3","kind":"fuel","vid":"v1","date":"2026-10-25","km":50800,"vol":15,"cost":240000,"full":true},
+ {"id":"f4","kind":"fuel","vid":"v1","date":"2026-11-03","km":51200,"vol":10,"cost":160000,"full":true},
+ {"id":"f5","kind":"fuel","vid":"v1","date":"2026-11-06","vol":4,"cost":64000,"full":false},
+ {"id":"f6","kind":"fuel","vid":"v1","date":"2026-12-01","vol":10,"cost":999999,"full":true}
+]}

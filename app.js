@@ -65,7 +65,7 @@ const TYPE = Object.freeze(Object.assign(Object.create(null), Object.fromEntries
 const BACKUP_DAYS = 30;
 
 const $ = s=>document.querySelector(s);
-const state = { vehicles:[], services:[], readings:[], year:null, sel:null, filter:"", editSvc:null, editCar:null, lastBackup:null, persisted:null, pendingRestore:null };
+const state = { vehicles:[], services:[], readings:[], fuels:[], editFuel:null, year:null, sel:null, filter:"", editSvc:null, editCar:null, lastBackup:null, persisted:null, pendingRestore:null };
 
 const nf = { format: n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".") };
 const cf = new Intl.NumberFormat("es",{maximumFractionDigits:2});
@@ -88,6 +88,7 @@ async function reload(){
   state.vehicles = docs.filter(d=>d.kind==="vehicle").sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
   state.services = docs.filter(d=>d.kind==="service");
   state.readings = docs.filter(d=>d.kind==="reading");
+  state.fuels = docs.filter(d=>d.kind==="fuel");
   if(!state.vehicles.some(v=>v.id===state.sel)){
     const saved = recall("bc.sel");
     state.sel = state.vehicles.some(v=>v.id===saved) ? saved : (state.vehicles[0]?.id||null);
@@ -145,7 +146,7 @@ function render(){
       )
     ));
   }
-  renderDue(v); renderMileage(v); renderLog(v); renderDataStatus();
+  renderDue(v); renderMileage(v); renderFuel(v); renderLog(v); renderDataStatus();
 }
 
 function dueItems(v){
@@ -207,6 +208,7 @@ function points(v){
   const add=(date,km,src)=>{ if(!date||km==null) return; const p=byDay.get(date); if(!p||km>p.km) byDay.set(date,{date,km,src}); };
   state.readings.filter(r=>r.vid===v.id).forEach(r=>add(r.date,r.km,"lectura"));
   state.services.filter(s=>s.vid===v.id).forEach(s=>add(s.date,s.km,"servicio"));
+  state.fuels.filter(f=>f.vid===v.id).forEach(f=>add(f.date,f.km,"tanqueo"));
   add(v.odoDate, v.odo, "lectura");
   const out=[], now=today(); [...byDay.values()].filter(p=>p.date<=now).sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>{
     if(!out.length || p.km>=out[out.length-1].km) out.push({...p, d:dayNum(p.date)});
@@ -389,6 +391,157 @@ function renderMileage(v){
 }
 $("#year").onchange=e=>{ state.year=Number(e.target.value); renderMileage(car()); };
 
+// ---------- fuel: fills, weekly/monthly spend, economy (full-to-full), cost per km ----------
+const unitOf = v => v && v.fuelUnit==="L" ? "L" : "gal";
+const unitName = v => unitOf(v)==="L" ? "litros" : "galones";
+const fmt2 = n => n.toLocaleString("es",{maximumFractionDigits:2});
+const GAL_L = 3.785411784;   // litres per US gallon
+// Plausible economy range per unit; segments outside it are typos and are ignored.
+const ECON = { L:[2,40], gal:[7.5,150] };
+// Fills of a vehicle up to today, oldest first (future-dated records never feed the numbers).
+function fillsOf(v){
+  const now=today();
+  return state.fuels.filter(f=>f.vid===v.id && f.date<=now)
+    .sort((a,b)=>a.date.localeCompare(b.date) || (a.km??0)-(b.km??0));
+}
+const weekStart = dn => dn - ((new Date(dn*86400000).getUTCDay()+6)%7);   // Monday
+// Full-to-full method: km between two full fills / volume of every fill after the first one,
+// up to and including the second. Only segments ending in the last 12 months count.
+function economy(v, fills){
+  const [lo,hi]=ECON[unitOf(v)], since=ymd(dayNum(today())-365);
+  let last=null, vol=0, cost=0, dist=0, tVol=0, tCost=0, segs=0;
+  for(const f of fills){
+    if(last){ vol+=f.vol; cost+=f.cost||0; }
+    if(f.full){
+      if(f.km==null){ last=null; vol=0; cost=0; continue; }
+      if(last){ const d=f.km-last.km, e=vol>0?d/vol:0;
+        if(d>0 && e>=lo && e<=hi && f.date>=since){ dist+=d; tVol+=vol; tCost+=cost; segs++; } }
+      last=f; vol=0; cost=0;
+    }
+  }
+  return segs ? { perUnit: dist/tVol, perKm: tCost/dist, segs, dist } : null;
+}
+
+function renderFuel(v){
+  const box=$("#fuel"); box.replaceChildren(); $("#btn-fuel").disabled=!v;
+  if(!v){ box.append(el("div",{className:"list"},el("div",{className:"empty",textContent:"Aquí verás tu gasto de combustible por semana y por mes, y el rendimiento de cada vehículo."}))); return; }
+  const fills=fillsOf(v), u=unitOf(v);
+  if(!fills.length){
+    const b=el("button",{type:"button",className:"primary",textContent:"Registrar primer tanqueo"}); b.onclick=()=>openFuel(null);
+    box.append(el("div",{className:"list"}, el("div",{className:"empty"}, el("strong",{textContent:"Sin tanqueos todavía"}),
+      `Anota cada carga: fecha, km, ${unitName(v)} y total pagado. Con dos tanques llenos seguidos calculo tu rendimiento.`, el("div",{style:"margin-top:12px"},b))));
+    return;
+  }
+  const tdn=dayNum(today()), wk=weekStart(tdn), month=today().slice(0,7), year=state.year||new Date().getFullYear();
+  const sum=(arr,k)=>arr.reduce((a,f)=>a+(Number(f[k])||0),0);
+  const inWeek=fills.filter(f=>dayNum(f.date)>=wk), inMonth=fills.filter(f=>f.date.startsWith(month));
+  const eco=economy(v, fills), pts=points(v), p0=pace(pts), p=p0&&!p0.implausible?p0:null;
+  const wrap=el("div",{className:"mi"});
+  wrap.append(el("div",{className:"stats"},
+    el("div",{className:"stat"}, el("b",{textContent:"$"+cf.format(Math.round(sum(inWeek,"cost")))}), el("small",{textContent:"Esta semana"})),
+    el("div",{className:"stat"}, el("b",{textContent:"$"+cf.format(Math.round(sum(inMonth,"cost")))}), el("small",{textContent:"Este mes"})),
+    el("div",{className:"stat"}, el("b",{textContent:eco?fmt1(eco.perUnit):"—"}), el("small",{textContent:`Km / ${u}`}))
+  ));
+
+  // monthly spend bars for the selected year (single series, no legend)
+  const months=MONTHS.map((name,m)=>{ const key=`${year}-${String(m+1).padStart(2,"0")}`; const fs=fills.filter(f=>f.date.startsWith(key));
+    return { name, cost: fs.length?sum(fs,"cost"):null, vol: sum(fs,"vol") }; });
+  const max=Math.max(0,...months.map(m=>m.cost||0));
+  if(max>0){
+    const readout=el("div",{className:"readout",role:"status"}), bars=el("div",{className:"bars"});
+    const show=(m,btn)=>{ bars.querySelectorAll(".bar-hit").forEach(x=>x.setAttribute("aria-pressed","false")); btn&&btn.setAttribute("aria-pressed","true");
+      readout.replaceChildren(`${m.name} ${year}: `, el("b",{textContent:m.cost==null?"sin tanqueos":"$"+cf.format(Math.round(m.cost))}), m.cost==null?"":` · ${fmt2(m.vol)} ${u}`); };
+    let lastIdx=-1; months.forEach((m,i)=>{ if(m.cost!=null) lastIdx=i; }); const maxIdx=months.findIndex(m=>m.cost===max);
+    months.forEach((m,i)=>{ const h=m.cost?Math.max(2,Math.round(m.cost/max*104)):0;
+      const hit=el("button",{type:"button",className:"bar-hit"}); hit.setAttribute("aria-label",`${m.name}: ${m.cost==null?"sin tanqueos":"$"+cf.format(Math.round(m.cost))}`);
+      hit.style.setProperty("--h",h+"px"); const b=el("span",{className:"b"}); b.style.height=h+"px"; hit.append(b);
+      if(i===maxIdx) hit.append(el("span",{className:"lbl",textContent: m.cost>=10000 ? "$"+cf.format(Math.round(m.cost/1000))+"k" : "$"+cf.format(Math.round(m.cost))}));
+      hit.onclick=()=>show(m,hit); hit.onpointerenter=()=>show(m,hit); hit.onfocus=()=>show(m,hit); bars.append(hit); });
+    const rows=months.map(m=>el("tr",{}, el("td",{textContent:m.name}), el("td",{className:"n",textContent:m.cost==null?"—":fmt2(m.vol)+" "+u}), el("td",{className:"n",textContent:m.cost==null?"—":"$"+cf.format(Math.round(m.cost))})));
+    const yTot=months.reduce((a,m)=>a+(m.cost||0),0);
+    wrap.append(el("div",{className:"chart"}, el("h2",{textContent:`Gasto mensual ${year}`}), readout, bars, el("div",{className:"months"}, ...MONTHS.map(n=>el("span",{textContent:n[0]}))),
+      el("details",{className:"tbl"}, el("summary",{textContent:"Ver tabla mensual"}), el("table",{}, el("tbody",{},...rows,
+        el("tr",{}, el("th",{textContent:`Total ${year}`}), el("th",{className:"n",textContent:""}), el("th",{className:"n",textContent:"$"+cf.format(Math.round(yTot))})))))));
+    if(lastIdx>=0) show(months[lastIdx], bars.children[lastIdx]);
+  } else wrap.append(el("p",{className:"hint",textContent:`Sin tanqueos registrados en ${year}.`}));
+
+  // last 8 weeks
+  const wrows=[]; for(let i=0;i<8;i++){ const s=wk-7*i, e=s+7, fs=fills.filter(f=>{ const d=dayNum(f.date); return d>=s && d<e; });
+    wrows.push(el("tr",{}, el("td",{textContent:(i===0?"Esta semana":"Sem. del "+fmtDate(ymd(s)).slice(0,5))}), el("td",{className:"n",textContent:fs.length?fmt2(sum(fs,"vol"))+" "+u:"—"}), el("td",{className:"n",textContent:fs.length?"$"+cf.format(Math.round(sum(fs,"cost"))):"—"}))); }
+  wrap.append(el("div",{}, el("h2",{textContent:"Últimas 8 semanas",style:"margin-bottom:8px"}),
+    el("div",{className:"tbl-scroll"}, el("table",{className:"years"}, el("thead",{}, el("tr",{}, el("th",{textContent:"Semana"}), el("th",{className:"n",textContent:"Cantidad"}), el("th",{className:"n",textContent:"Gasto"}))), el("tbody",{},...wrows)))));
+
+  // economy, cost per km, projection
+  const last=fills[fills.length-1], notes=[];
+  if(last.vol>0 && last.cost) notes.push(`Último precio: $${cf.format(Math.round(last.cost/last.vol))} por ${u==="L"?"litro":"galón"}.`);
+  if(eco){ notes.push(`Rendimiento: ${fmt1(eco.perUnit)} km/${u} y $${cf.format(Math.round(eco.perKm))} por km (${eco.segs} tramo(s) de tanque lleno a tanque lleno, últimos 12 meses).`);
+    if(p) notes.push(`A tu ritmo de ${fmtKm(p.perDay*365)} km/año, el combustible te costaría unos $${cf.format(Math.round(eco.perKm*p.perDay*365))} al año (≈ $${cf.format(Math.round(eco.perKm*p.perDay*30.44))} al mes).`); }
+  else notes.push(`Para calcular rendimiento y costo por km necesito dos tanqueos con "Llené el tanque" y su kilometraje.`);
+  notes.push("Semanas de lunes a domingo; el gasto se cuenta en la fecha del tanqueo.");
+  wrap.append(el("p",{className:"hint",textContent:notes.join(" ")}));
+
+  // recent fills (tap to edit)
+  const list=el("div",{className:"list"});
+  [...fills].reverse().slice(0,10).forEach(f=>{
+    const r=el("button",{type:"button",className:"row"},
+      el("div",{className:"row-title",textContent:`${fmt2(f.vol)} ${u} · $${cf.format(f.cost)}`}),
+      el("div",{className:"row-right",textContent:f.km!=null?fmtKm(f.km)+" km":"—"}),
+      el("div",{className:"row-meta",textContent:[fmtDate(f.date), f.full?"Tanque lleno":"Parcial", f.vol>0?`$${cf.format(Math.round(f.cost/f.vol))}/${u}`:"", f.station].filter(Boolean).join(" · ")}));
+    r.onclick=()=>openFuel(f); list.append(r);
+  });
+  wrap.append(el("div",{}, el("h2",{textContent:`Tanqueos (${fills.length})`,style:"margin-bottom:8px"}), list,
+    fills.length>10 ? el("p",{className:"note",textContent:"Se muestran los 10 más recientes; todos están en el respaldo y en el CSV."}) : null));
+  box.append(wrap);
+}
+
+// fuel dialog
+function fuelError(msg){ const e=$("#u-err"); e.textContent=msg||""; e.hidden=!msg; }
+function fuelHint(){ const vol=Number($("#u-vol").value), cost=Number($("#u-cost").value), v=car();
+  $("#u-hint").textContent = vol>0 && cost>0 ? `Precio: $${cf.format(Math.round(cost/vol))} por ${unitOf(v)==="L"?"litro":"galón"}.` : ""; }
+function resetFuelSave(){ fuelError(""); const s=$("#u-save"); s.textContent="Guardar"; delete s.dataset.confirm; }
+function openFuel(f){
+  const v=car(); if(!v) return; state.editFuel=f||null;
+  $("#fuel-title").textContent = f?"Editar tanqueo":"Registrar tanqueo";
+  $("#u-vol-label").textContent = unitOf(v)==="L" ? "Litros" : "Galones";
+  $("#u-date").value=f?.date||today(); $("#u-date").max=today();
+  $("#u-km").value=f?.km??""; $("#u-km").placeholder = v.odo!=null?String(v.odo):"";
+  $("#u-vol").value=f?.vol??""; $("#u-cost").value=f?.cost??""; $("#u-full").checked=f?f.full:true; $("#u-station").value=f?.station||"";
+  const del=$("#u-del"); del.hidden=!f; del.textContent="Eliminar"; delete del.dataset.armed;
+  resetFuelSave(); fuelHint(); $("#dlg-fuel").showModal();
+}
+$("#btn-fuel").onclick=()=>openFuel(null);
+["#u-vol","#u-cost"].forEach(id=>$(id).addEventListener("input",fuelHint));
+["#u-date","#u-km","#u-vol","#u-cost"].forEach(id=>$(id).addEventListener("input",resetFuelSave));
+$("#u-del").onclick=async e=>{
+  if(!armDelete(e.currentTarget,"¿Seguro? Toca de nuevo")) return;
+  const f=state.editFuel; $("#dlg-fuel").close();
+  try{ await delRecord(f.id); await reload(); toast("Tanqueo eliminado"); }catch(err){ toast("No se pudo eliminar: "+err); }
+};
+$("#f-fuel").onsubmit=async e=>{
+  e.preventDefault(); const v=car(); if(!v) return;
+  const date=DATE($("#u-date").value), kmRaw=$("#u-km").value.trim(), km=kmRaw===""?null:Math.round(Number(kmRaw));
+  const vol=Number($("#u-vol").value), cost=Number($("#u-cost").value), save=$("#u-save");
+  if(!date || date>today()) return fuelError("Elige una fecha válida que no sea futura.");
+  if(!(vol>0 && vol<=1000)) return fuelError(`Escribe la cantidad en ${unitName(v)} (mayor que 0 y hasta 1.000).`);
+  if(!(cost>=0 && cost<=1e9) || $("#u-cost").value.trim()==="") return fuelError("Escribe el total pagado (hasta 1.000 millones).");
+  if(km!=null && !(km>=0 && km<=2e6)) return fuelError("El kilometraje debe estar entre 0 y 2.000.000 km.");
+  if(km!=null && !save.dataset.confirm){
+    const pts=points(v).filter(p=>!state.editFuel || p.date!==state.editFuel.date), d=dayNum(date);
+    const prev=[...pts].reverse().find(p=>p.d<=d), next=pts.find(p=>p.d>=d);
+    let msg=null;
+    if(prev && km<prev.km) msg=`El ${fmtDate(prev.date)} ya tenías ${fmtKm(prev.km)} km; este kilometraje es menor. Toca de nuevo si es correcto.`;
+    else if(next && km>next.km) msg=`El ${fmtDate(next.date)} tenías ${fmtKm(next.km)} km; este kilometraje es mayor. Toca de nuevo si es correcto.`;
+    if(msg){ fuelError(msg); save.dataset.confirm="1"; save.textContent="Guardar de todas formas"; return; }
+  }
+  const prevF=state.editFuel;
+  try{
+    await putRecord({ id: prevF?prevF.id:newId(), kind:"fuel", vid:v.id, date, km, vol, cost, full:$("#u-full").checked,
+      station:$("#u-station").value.trim().slice(0,60), createdAt: prevF?.createdAt||new Date().toISOString() });
+    if(km!=null && km>(v.odo||0) && (!v.odoDate || date>=v.odoDate)){ await keepCurrentReading(v); await putRecord({...v, odo:km, odoDate:date}); }
+    $("#dlg-fuel").close(); await reload(); toast("Tanqueo guardado");
+  }catch(err){ fuelError("No se pudo guardar: "+err); }
+};
+
 function renderLog(v){
   const box=$("#log"); box.replaceChildren();
   const sel=$("#filter");
@@ -500,13 +653,13 @@ function openCar(v){
   state.editCar=v;
   $("#car-title").textContent = v?"Editar vehículo":"Nuevo vehículo";
   $("#c-name").value=v?.name||""; $("#c-make").value=v?.make||""; $("#c-model").value=v?.model||"";
-  $("#c-year").value=v?.year||""; $("#c-plate").value=v?.plate||""; $("#c-odo").value=v?.odo??"";
+  $("#c-year").value=v?.year||""; $("#c-plate").value=v?.plate||""; $("#c-odo").value=v?.odo??""; $("#c-unit").value=unitOf(v);
   const del=$("#c-del"); del.hidden=!v; del.textContent="Eliminar vehículo"; delete del.dataset.armed;
   $("#dlg-car").showModal();
 }
 $("#c-del").onclick=async e=>{
-  const v=state.editCar; const mine=[...state.services, ...state.readings].filter(s=>s.vid===v.id);
-  if(!armDelete(e.currentTarget,`Borra también ${mine.length} registro(s) de servicios y lecturas. ¿Confirmas?`)) return;
+  const v=state.editCar; const mine=[...state.services, ...state.readings, ...state.fuels].filter(s=>s.vid===v.id);
+  if(!armDelete(e.currentTarget,`Borra también ${mine.length} registro(s) de servicios, lecturas y tanqueos. ¿Confirmas?`)) return;
   $("#dlg-car").close();
   try{
     for(const s of mine) await delRecord(s.id);
@@ -518,11 +671,15 @@ $("#f-car").onsubmit=async e=>{
   const v=state.editCar;
   const data={ kind:"vehicle", name:$("#c-name").value.trim(), make:$("#c-make").value.trim(), model:$("#c-model").value.trim(),
     year:$("#c-year").value?Number($("#c-year").value):null, plate:$("#c-plate").value.trim().toUpperCase(),
-    odo:Number($("#c-odo").value)||0 };
+    odo:Number($("#c-odo").value)||0, fuelUnit: $("#c-unit").value==="L" ? "L" : "gal" };
+  if(data.odo<0 || data.odo>2e6){ toast("El kilometraje debe estar entre 0 y 2.000.000 km"); return; }
   $("#dlg-car").close();
   try{
     if(v){
       const changed = data.odo!==v.odo;
+      // switching gallons <-> litres converts the volumes already recorded, so economy stays right
+      if(unitOf(v)!==data.fuelUnit){ const k = data.fuelUnit==="L" ? GAL_L : 1/GAL_L;
+        for(const f of state.fuels.filter(f=>f.vid===v.id)) await putRecord({...f, vol: Math.round(f.vol*k*1000)/1000}); }
       if(changed && data.odo>(v.odo||0)) await keepCurrentReading(v);
       await putRecord({...v, ...data, odoDate: changed ? today() : v.odoDate});
       if(changed) await saveReading(v.id, today(), data.odo);
@@ -604,7 +761,8 @@ $("#btn-csv").onclick=async ()=>{
   const v=car(); if(!v) return;
   const q=x=>{ let v=String(x??""); if(typeof x==="string" && /^[=+\-@\t\r]/.test(v)) v="'"+v; return `"${v.replace(/"/g,'""')}"`; };
   const rows=[["Fecha","Kilometraje","Servicio","Piezas","Costo","Taller","Próximo km","Próxima fecha","Notas"]]
-    .concat(svcs().map(s=>[s.date,s.km,label(s),s.parts,s.cost,s.shop,s.nextKm,s.nextDate,s.notes]));
+    .concat(svcs().map(s=>[s.date,s.km,label(s),s.parts,s.cost,s.shop,s.nextKm,s.nextDate,s.notes]))
+    .concat(fillsOf(v).map(f=>[f.date,f.km,`Combustible (${fmt2(f.vol)} ${unitOf(v)})`,f.full?"Tanque lleno":"Parcial",f.cost,f.station,"","",""]));
   const csv="﻿"+rows.map(r=>r.map(q).join(",")).join("\r\n");
   const name=(v.plate||v.name).replace(/[^\w-]+/g,"_");
   try{ const r=await shareOrDownload(`bitacora_${name}.csv`, csv, "text/csv"); if(r!=="cancelled") toast("CSV listo"); }
@@ -624,7 +782,10 @@ const DATE = x=>{
 function sanitize(r){
   if(!r || typeof r!=="object" || typeof r.id!=="string" || !r.id || r.id.length>64) return null;
   if(r.kind==="vehicle") return { id:r.id, kind:"vehicle", name:STR(r.name,40)||"Vehículo", make:STR(r.make,30), model:STR(r.model,40),
-    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:KM(r.odo)||0, odoDate:DATE(r.odoDate), createdAt:STR(r.createdAt,40) };
+    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:KM(r.odo)||0, odoDate:DATE(r.odoDate), fuelUnit: r.fuelUnit==="L" ? "L" : "gal", createdAt:STR(r.createdAt,40) };
+  if(r.kind==="fuel"){ const date=DATE(r.date), vol=NUM(r.vol), cost=COST(r.cost);
+    return (date && vol!=null && vol>0 && vol<=1000 && cost!=null) ? { id:r.id, kind:"fuel", vid:STR(r.vid,64), date, km:KM(r.km), vol, cost,
+      full: r.full===true, station:STR(r.station,60), createdAt:STR(r.createdAt,40) } : null; }
   if(r.kind==="reading"){ const date=DATE(r.date), km=KM(r.km); return (date && km!=null) ? { id:r.id, kind:"reading", vid:STR(r.vid,64), date, km, createdAt:STR(r.createdAt,40) } : null; }
   if(r.kind==="service") return { id:r.id, kind:"service", vid:STR(r.vid,64), type: TYPE[r.type] ? r.type : "otro",
     other:STR(r.other,60) || (TYPE[r.type] ? "" : STR(r.type,60)), date:DATE(r.date), km:KM(r.km), parts:STR(r.parts,200),
@@ -646,7 +807,7 @@ $("#restore-file").onchange=async e=>{
     const clean=recs.filter(r=>r.kind==="vehicle" || vids.has(r.vid));
     state.pendingRestore=clean;
     const cnt=k=>clean.filter(r=>r.kind===k).length;
-    $("#r-summary").textContent=`Respaldo del ${fmtDate(data.exportedAt)}: ${cnt("vehicle")} vehículo(s), ${cnt("service")} servicio(s) y ${cnt("reading")} lectura(s) de km.`;
+    $("#r-summary").textContent=`Respaldo del ${fmtDate(data.exportedAt)}: ${cnt("vehicle")} vehículo(s), ${cnt("service")} servicio(s), ${cnt("reading")} lectura(s) de km y ${cnt("fuel")} tanqueo(s).`;
     $("#dlg-restore").showModal();
   }catch(err){ toast("No se pudo leer el archivo: "+(err.message||err)); }
 };

@@ -20,6 +20,7 @@ PWA estática (GitHub Pages) que guarda los datos solo en el dispositivo (Indexe
 - Todo dato importado pasa por `sanitize()` (tipos conocidos, IDs únicos, fechas reales, km ≤ 2.000.000, costos ≤ 1e9).
 - Tablas de búsqueda con prototipo nulo o `Map`, nunca objetos planos indexados con datos del usuario.
 - Fechas futuras e intervalos absurdos no alimentan promedios ni presupuestos.
+- Tanqueos: cantidad > 0 y ≤ 1.000, `full` solo si es `true` literal, unidad solo `gal` o `L`; tramos de rendimiento fuera de rango plausible se ignoran.
 - Exportaciones CSV neutralizan fórmulas (`= + - @`).
 
 ## Ejecutar las pruebas

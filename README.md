@@ -30,6 +30,14 @@ iOS puede borrar los datos de una app web si el teléfono se queda sin espacio, 
 - **Resumen por año**: km, cambios de aceite, servicios y gasto de cada año. Al llegar el 1 de enero, el año anterior queda cerrado ahí y en el selector de año; el promedio sigue usando los últimos 12 meses, así que no se "reinicia". En diciembre la app pide la lectura del 31 para cerrar el año exacto.
 - El **presupuesto anual** multiplica cuántas veces al año te toca cada servicio (según tu promedio de km y el intervalo que definiste) por su último costo.
 
+## Combustible
+
+- Botón **+ Tanqueo**: fecha, kilometraje, cantidad (galones o litros, se elige por vehículo en "Editar"), total pagado, si llenaste el tanque y la estación. La app calcula el precio por unidad.
+- **Gasto de esta semana y de este mes**, gráfico de gasto mensual y tabla de las últimas 8 semanas (semanas de lunes a domingo).
+- **Rendimiento** (km/gal o km/L) y **costo por km** con el método tanque lleno a tanque lleno: marca "Llené el tanque" y anota el kilometraje para que se pueda calcular.
+- **Proyección** del gasto anual y mensual de combustible según tus km al año.
+- El km de cada tanqueo también cuenta como lectura del odómetro. Cambiar la unidad convierte los tanqueos ya registrados.
+
 ## Publicar actualizaciones
 
 Cada vez que cambies archivos, sube el valor de `VERSION` en `sw.js` (por ejemplo `bc-v2`) para que los teléfonos descarguen la versión nueva.

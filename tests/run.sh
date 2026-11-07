@@ -34,6 +34,13 @@ O=$(node evil2.js 2>&1); check "lecturas maliciosas: sin XSS"       "$O" "pwned:
 O=$(node evil3.js 2>&1); check "nombres con código en frecuencias"  "$O" "pwned: 0 \| <img> inyectados: 0"
                          none  "datos absurdos no inflan cifras"    "$O" "[0-9]{1,3}(\.[0-9]{3}){2,},?[0-9]*/año"
                          check "sin errores JS"                     "$O" "errores: \[\]"
+O=$(node evil4.js 2>&1); check "combustible: XSS en estación bloqueado" "$O" "pwned: 0 \| <img> inyectados: 0"
+                         check "combustible: solo registros válidos" "$O" "y 5 tanqueo\(s\)"
+                         check "combustible: ID repetido no borra"  "$O" "vehículo intacto: Carro"
+                         check "combustible: rendimiento imposible ignorado" "$O" "40Km / gal"
+                         check "combustible: fórmula CSV neutralizada" "$O" "\"'=HYPERLINK"
+                         check "combustible: conexión externa bloqueada" "$O" "fetch externo: bloqueado"
+                         check "combustible: sin errores JS"        "$O" "errores: \[\]"
 O=$(node frame.js 2>&1); check "anti-clickjacking"                  "$O" "Abre la Bitácora directamente"
 
 echo "== Regresión funcional =="
@@ -45,6 +52,14 @@ O=$(node km.js 2>&1);    check "km/mes y km/año exactos"            "$O" "stats
 O=$(node yr.js 2>&1);    check "aviso de cierre en diciembre"       "$O" "Cierre de año: registra el km el 31 de diciembre"
                          check "cambio de año a 2027"               "$O" "selector de año: 2026,2027 \(elegido 2027\)"
                          none  "sin errores JS"                     "$O" "errores: \[[^]]"
+
+O=$(node fuel.js 2>&1);  check "combustible: semana/mes/rendimiento exactos" "$O" "fuel stats: \\\$224.000Esta semana\\\$224.000Este mes40Km / gal"
+                         check "combustible: costo por km y proyección" "$O" "\\\$400 por km.*\\\$5.309.091 al año"
+                         check "combustible: octubre exacto"        "$O" "Octubre30 gal\\\$470.000"
+                         check "combustible: fecha futura ignorada" "$O" "Esta semana14 gal"
+                         check "combustible: aviso km incoherente"  "$O" "Guardar de todas formas"
+                         check "combustible: conversión a litros"   "$O" "9,4Km / L"
+                         check "combustible: sin errores JS"        "$O" "errores: \[\]"
 
 echo
 if [ $fail -eq 0 ]; then echo "RESULTADO: TODO OK — se puede publicar."; else echo "RESULTADO: HAY FALLAS — NO publicar."; fi

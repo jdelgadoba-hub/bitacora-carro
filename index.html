@@ -117,6 +117,8 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 .mi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:grid;gap:14px}
 .mi .stats{grid-template-columns:repeat(3,1fr)}
 .mi > *{min-width:0}
+.mi .stat b{white-space:normal;overflow-wrap:anywhere;text-overflow:clip}
+@media (max-width:360px){.mi .stat{padding:8px 6px}.mi .stat b{font-size:13px}.mi .stat small{font-size:10px}}
 .mi-remind{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:14px}
 .mi-remind button{border:1px solid currentColor;background:none;color:inherit;border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}
 .chart{display:grid;gap:6px}
@@ -149,6 +151,10 @@ table.years td{border-top:1px solid var(--line)}
 table.years .n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 table.years th{color:var(--muted);font-weight:600;font-size:12px}
 .budget-total{display:flex;justify-content:space-between;gap:10px;padding:12px 14px;border-top:2px solid var(--line);font-weight:600}
+/* fuel */
+.check{display:flex;gap:10px;align-items:center;font-size:15px}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+.iconbtn:disabled{opacity:.5}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:10;max-width:calc(100% - 32px);text-align:center}
 @media (prefers-reduced-motion:no-preference){.toast{animation:pop .2s ease-out}@keyframes pop{from{opacity:0;transform:translate(-50%,8px)}}}
 </style>
@@ -177,6 +183,14 @@ table.years th{color:var(--muted);font-weight:600;font-size:12px}
       <select id="year" aria-label="Año" hidden></select>
     </div>
     <div id="mileage"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Combustible</h2>
+      <button type="button" class="iconbtn" id="btn-fuel" disabled>+ Tanqueo</button>
+    </div>
+    <div id="fuel"></div>
   </section>
 
   <section>
@@ -240,11 +254,35 @@ table.years th{color:var(--muted);font-weight:600;font-size:12px}
     <div class="field"><label for="c-year">Año</label><input id="c-year" type="number" inputmode="numeric" min="1950" max="2100"></div>
     <div class="field"><label for="c-plate">Placa</label><input id="c-plate" maxlength="12" autocapitalize="characters"></div>
   </div>
-  <div class="field"><label for="c-odo">Kilometraje actual</label><input id="c-odo" type="number" inputmode="numeric" min="0" step="1" required></div>
+  <div class="grid2">
+    <div class="field"><label for="c-odo">Kilometraje actual</label><input id="c-odo" type="number" inputmode="numeric" min="0" max="2000000" step="1" required></div>
+    <div class="field"><label for="c-unit">Combustible en</label><select id="c-unit"><option value="gal">Galones</option><option value="L">Litros</option></select></div>
+  </div>
   <div class="actions">
     <button type="button" class="danger" id="c-del" hidden>Eliminar vehículo</button>
     <button type="button" class="ghost" data-close>Cancelar</button>
     <button type="submit" class="primary">Guardar</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlg-fuel"><form class="sheet" id="f-fuel" method="dialog">
+  <h3 id="fuel-title">Registrar tanqueo</h3>
+  <div class="grid2">
+    <div class="field"><label for="u-date">Fecha</label><input id="u-date" type="date" required></div>
+    <div class="field"><label for="u-km">Kilometraje</label><input id="u-km" type="number" inputmode="numeric" min="0" max="2000000" step="1"></div>
+  </div>
+  <div class="grid2">
+    <div class="field"><label for="u-vol" id="u-vol-label">Galones</label><input id="u-vol" type="number" inputmode="decimal" min="0.01" max="1000" step="any" required></div>
+    <div class="field"><label for="u-cost">Total pagado</label><input id="u-cost" type="number" inputmode="decimal" min="0" max="1000000000" step="any" required></div>
+  </div>
+  <label class="check"><input type="checkbox" id="u-full" checked> Llené el tanque</label>
+  <div class="field"><label for="u-station">Estación (opcional)</label><input id="u-station" maxlength="60"></div>
+  <p class="hint" id="u-hint"></p>
+  <p class="form-error" id="u-err" role="alert" hidden></p>
+  <div class="actions">
+    <button type="button" class="danger" id="u-del" hidden>Eliminar</button>
+    <button type="button" class="ghost" data-close>Cancelar</button>
+    <button type="submit" class="primary" id="u-save">Guardar</button>
   </div>
 </form></dialog>
 
