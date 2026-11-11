@@ -129,6 +129,7 @@ function render(){
     const editBtn=el("button",{type:"button",className:"iconbtn",textContent:"Editar"}); editBtn.onclick=()=>openCar(v);
     const odoBtn=el("button",{type:"button",className:"iconbtn",textContent:"Actualizar km"}); odoBtn.onclick=openOdo;
     box.append(el("div",{className:"car"},
+      validPhoto(v.photo) ? el("img",{className:"car-photo",src:v.photo,alt:`Foto de ${v.name}`}) : null,
       el("div",{className:"car-head"},
         el("div",{style:"min-width:0"}, el("div",{className:"car-name",textContent:v.name}), el("div",{className:"car-sub",textContent:sub||"Sin datos de modelo"})),
         v.plate ? el("div",{className:"plate",textContent:v.plate}) : null
@@ -649,12 +650,51 @@ $("#f-svc").onsubmit=async e=>{
   }catch(err){ toast("No se pudo guardar: "+err); }
 };
 
+// ---------- vehicle photo ----------
+// Only a re-encoded JPEG/PNG/WebP data: URL is ever stored or shown (never other schemes or SVG).
+const PHOTO_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const PHOTO_MAX = 700000;                    // characters (~500 KB of image)
+const validPhoto = p => typeof p==="string" && p.length<=PHOTO_MAX && PHOTO_RE.test(p);
+function showPhotoPreview(src){
+  const img=$("#c-photo-prev"); if(src){ img.src=src; img.hidden=false; } else { img.removeAttribute("src"); img.hidden=true; }
+  $("#c-photo-del").hidden=!src;
+}
+// Decode locally, check size, scale to <=1024 px and re-encode as JPEG. Re-encoding through a
+// canvas drops EXIF metadata (GPS location, device), so none of it is kept.
+async function processPhoto(file){
+  if(!file || !/^image\//.test(file.type||"")) throw new Error("El archivo no es una imagen.");
+  if(file.size > 25*1024*1024) throw new Error("La imagen pesa más de 25 MB.");
+  const url=URL.createObjectURL(file);
+  try{
+    const img=new Image(); img.src=url;
+    try{ await img.decode(); }catch(e){ throw new Error("No se pudo leer la imagen."); }
+    const w=img.naturalWidth, h=img.naturalHeight;
+    if(!w || !h || w*h > 80e6) throw new Error("La imagen es demasiado grande (máximo 80 megapíxeles).");
+    const k=Math.min(1, 1024/Math.max(w,h)), cw=Math.max(1,Math.round(w*k)), ch=Math.max(1,Math.round(h*k));
+    const c=document.createElement("canvas"); c.width=cw; c.height=ch;
+    const ctx=c.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,cw,ch); ctx.drawImage(img,0,0,cw,ch);
+    let out=c.toDataURL("image/jpeg",0.8);
+    if(out.length>PHOTO_MAX) out=c.toDataURL("image/jpeg",0.6);
+    if(!validPhoto(out)) throw new Error("No se pudo procesar la imagen.");
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+$("#c-photo").onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  $("#c-photo-hint").textContent="Procesando foto…";
+  try{ const p=await processPhoto(f); state.carPhoto=p; showPhotoPreview(p);
+    $("#c-photo-hint").textContent="Foto lista. Se guardará al tocar Guardar."; }
+  catch(err){ $("#c-photo").value=""; $("#c-photo-hint").textContent=err.message||"No se pudo usar esa imagen."; }
+};
+$("#c-photo-del").onclick=()=>{ state.carPhoto=null; $("#c-photo").value=""; showPhotoPreview(null); $("#c-photo-hint").textContent="La foto se quitará al tocar Guardar."; };
+
 function openCar(v){
   state.editCar=v;
   $("#car-title").textContent = v?"Editar vehículo":"Nuevo vehículo";
   $("#c-name").value=v?.name||""; $("#c-make").value=v?.make||""; $("#c-model").value=v?.model||"";
   $("#c-year").value=v?.year||""; $("#c-plate").value=v?.plate||""; $("#c-odo").value=v?.odo??""; $("#c-unit").value=unitOf(v);
   const del=$("#c-del"); del.hidden=!v; del.textContent="Eliminar vehículo"; delete del.dataset.armed;
+  state.carPhoto=undefined; $("#c-photo").value=""; showPhotoPreview(validPhoto(v?.photo) ? v.photo : null);
   $("#dlg-car").showModal();
 }
 $("#c-del").onclick=async e=>{
@@ -672,6 +712,8 @@ $("#f-car").onsubmit=async e=>{
   const data={ kind:"vehicle", name:$("#c-name").value.trim(), make:$("#c-make").value.trim(), model:$("#c-model").value.trim(),
     year:$("#c-year").value?Number($("#c-year").value):null, plate:$("#c-plate").value.trim().toUpperCase(),
     odo:Number($("#c-odo").value)||0, fuelUnit: $("#c-unit").value==="L" ? "L" : "gal" };
+  if(state.carPhoto!==undefined) data.photo = state.carPhoto;          // null removes it
+  else if(!v) data.photo = null;
   if(data.odo<0 || data.odo>2e6){ toast("El kilometraje debe estar entre 0 y 2.000.000 km"); return; }
   $("#dlg-car").close();
   try{
@@ -782,7 +824,7 @@ const DATE = x=>{
 function sanitize(r){
   if(!r || typeof r!=="object" || typeof r.id!=="string" || !r.id || r.id.length>64) return null;
   if(r.kind==="vehicle") return { id:r.id, kind:"vehicle", name:STR(r.name,40)||"Vehículo", make:STR(r.make,30), model:STR(r.model,40),
-    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:KM(r.odo)||0, odoDate:DATE(r.odoDate), fuelUnit: r.fuelUnit==="L" ? "L" : "gal", createdAt:STR(r.createdAt,40) };
+    year:NUM(r.year), plate:STR(r.plate,12).toUpperCase(), odo:KM(r.odo)||0, odoDate:DATE(r.odoDate), fuelUnit: r.fuelUnit==="L" ? "L" : "gal", photo: validPhoto(r.photo) ? r.photo : null, createdAt:STR(r.createdAt,40) };
   if(r.kind==="fuel"){ const date=DATE(r.date), vol=NUM(r.vol), cost=COST(r.cost);
     return (date && vol!=null && vol>0 && vol<=1000 && cost!=null) ? { id:r.id, kind:"fuel", vid:STR(r.vid,64), date, km:KM(r.km), vol, cost,
       full: r.full===true, station:STR(r.station,60), createdAt:STR(r.createdAt,40) } : null; }

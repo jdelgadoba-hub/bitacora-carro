@@ -155,6 +155,13 @@ table.years th{color:var(--muted);font-weight:600;font-size:12px}
 .check{display:flex;gap:10px;align-items:center;font-size:15px}
 .check input{width:20px;height:20px;accent-color:var(--accent)}
 .iconbtn:disabled{opacity:.5}
+/* vehicle photo */
+.car-photo{display:block;width:100%;max-width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:var(--bg)}
+.photo-edit{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.photo-edit img{width:96px;height:64px;object-fit:cover;border-radius:6px;background:var(--bg);flex:none}
+.photo-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-width:0;flex:1}
+.photo-actions input[type=file]{font-size:14px;max-width:100%}
+.photo-actions .ghost{padding:8px 14px}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:10;max-width:calc(100% - 32px);text-align:center}
 @media (prefers-reduced-motion:no-preference){.toast{animation:pop .2s ease-out}@keyframes pop{from{opacity:0;transform:translate(-50%,8px)}}}
 </style>
@@ -257,6 +264,17 @@ table.years th{color:var(--muted);font-weight:600;font-size:12px}
   <div class="grid2">
     <div class="field"><label for="c-odo">Kilometraje actual</label><input id="c-odo" type="number" inputmode="numeric" min="0" max="2000000" step="1" required></div>
     <div class="field"><label for="c-unit">Combustible en</label><select id="c-unit"><option value="gal">Galones</option><option value="L">Litros</option></select></div>
+  </div>
+  <div class="field">
+    <label for="c-photo">Foto (opcional)</label>
+    <div class="photo-edit">
+      <img id="c-photo-prev" alt="Foto del vehículo" hidden>
+      <div class="photo-actions">
+        <input type="file" id="c-photo" accept="image/*">
+        <button type="button" class="ghost" id="c-photo-del" hidden>Quitar foto</button>
+      </div>
+    </div>
+    <p class="hint" id="c-photo-hint">Se guarda solo en este teléfono, reducida y sin ubicación GPS ni otros datos ocultos de la foto.</p>
   </div>
   <div class="actions">
     <button type="button" class="danger" id="c-del" hidden>Eliminar vehículo</button>

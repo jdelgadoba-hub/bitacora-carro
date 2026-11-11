@@ -41,6 +41,8 @@ O=$(node evil4.js 2>&1); check "combustible: XSS en estación bloqueado" "$O" "p
                          check "combustible: fórmula CSV neutralizada" "$O" "\"'=HYPERLINK"
                          check "combustible: conexión externa bloqueada" "$O" "fetch externo: bloqueado"
                          check "combustible: sin errores JS"        "$O" "errores: \[\]"
+O=$(node evil5.js 2>&1); check "foto: solo imágenes válidas en respaldo" "$O" "vehículos con foto mostrada: ok$"
+                         check "foto: sin código ni conexiones externas" "$O" "pwned: 0 \| peticiones externas: 0 \| errores: \[\]"
 O=$(node frame.js 2>&1); check "anti-clickjacking"                  "$O" "Abre la Bitácora directamente"
 
 echo "== Regresión funcional =="
@@ -60,6 +62,15 @@ O=$(node fuel.js 2>&1);  check "combustible: semana/mes/rendimiento exactos" "$O
                          check "combustible: aviso km incoherente"  "$O" "Guardar de todas formas"
                          check "combustible: conversión a litros"   "$O" "9,4Km / L"
                          check "combustible: sin errores JS"        "$O" "errores: \[\]"
+
+O=$(node photo.js 2>&1); check "foto: rechaza archivo que no es imagen" "$O" "notimg.txt: El archivo no es una imagen"
+                         check "foto: rechaza imagen corrupta"      "$O" "fake.jpg: No se pudo leer la imagen"
+                         check "foto: rechaza imagen gigante (90 MP)" "$O" "big.png: La imagen es demasiado grande"
+                         check "foto: reducida a 1024 px"           "$O" "dimensiones: 1024x768"
+                         check "foto: GPS/EXIF eliminados"          "$O" "EXIF eliminado: true \| marca/modelo eliminados: true"
+                         check "foto: respaldo y restauración"      "$O" "restaurada: true"
+                         check "foto: quitar la borra"              "$O" "tras quitar -> tarjeta: false \| guardada: null"
+                         check "foto: sin errores JS"               "$O" "errores: \[\]"
 
 echo
 if [ $fail -eq 0 ]; then echo "RESULTADO: TODO OK — se puede publicar."; else echo "RESULTADO: HAY FALLAS — NO publicar."; fi

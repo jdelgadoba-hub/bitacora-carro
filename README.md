@@ -38,6 +38,10 @@ iOS puede borrar los datos de una app web si el teléfono se queda sin espacio, 
 - **Proyección** del gasto anual y mensual de combustible según tus km al año.
 - El km de cada tanqueo también cuenta como lectura del odómetro. Cambiar la unidad convierte los tanqueos ya registrados.
 
+## Foto del vehículo
+
+En **Editar** del vehículo puedes elegir una foto (cámara o galería). La app la reduce a 1.024 px y la vuelve a guardar **sin datos ocultos** (ubicación GPS, marca y modelo del teléfono). Se guarda solo en el teléfono y viaja en el respaldo.
+
 ## Publicar actualizaciones
 
 Cada vez que cambies archivos, sube el valor de `VERSION` en `sw.js` (por ejemplo `bc-v2`) para que los teléfonos descarguen la versión nueva.

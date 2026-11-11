@@ -22,6 +22,7 @@ PWA estática (GitHub Pages) que guarda los datos solo en el dispositivo (Indexe
 - Fechas futuras e intervalos absurdos no alimentan promedios ni presupuestos.
 - Tanqueos: cantidad > 0 y ≤ 1.000, `full` solo si es `true` literal, unidad solo `gal` o `L`; tramos de rendimiento fuera de rango plausible se ignoran.
 - Exportaciones CSV neutralizan fórmulas (`= + - @`).
+- Fotos: solo `data:image/(jpeg|png|webp);base64` validadas con `validPhoto()` (≤ 700.000 caracteres); al subir se decodifica localmente, se limita a 80 MP y se re-codifica en canvas para eliminar EXIF/GPS. Nunca SVG ni URL externas.
 
 ## Ejecutar las pruebas
 
